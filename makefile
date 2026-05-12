@@ -6,3 +6,6 @@ list_schema:
 
 list_files:
 	go tool iceberg --catalog hadoop --warehouse /tmp/iceberg-warehouse files default.my_table
+
+copy_geoconnex_graph:
+	gsutil -m cp -r gs://harvest-geoconnex-us/graphs/latest testdata/
