@@ -1,0 +1,1 @@
+This repo is a sample project for exploring representing triple pattern fragment data within Apache Iceberg.
