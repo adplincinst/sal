@@ -82,6 +82,7 @@ func main() {
 			"write.parquet.compression-codec":         cfg.parquetCompression,
 			"write.metadata.metrics.default":          cfg.metricsMode,
 			table.WriteTargetFileSizeBytesKey:         strconv.FormatInt(cfg.targetFileSizeBytes, 10),
+			table.WriteDeleteModeKey:                  table.WriteModeMergeOnRead,
 		}),
 	)
 	createdTable := err == nil
