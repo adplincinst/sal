@@ -72,9 +72,17 @@ func main() {
 		log.Println("Reset table default.triples")
 	}
 
+	partitionSpec := iceberg.NewPartitionSpec(
+		iceberg.PartitionField{SourceIDs: []int{2}, Transform: iceberg.TruncateTransform{Width: 20}, Name: "predicate_partition"},
+	)
+
+	sortField := table.SortField{SourceIDs: []int{2}, Direction: table.SortASC}
+	sortOrder, err := table.NewSortOrder(table.InitialSortOrderID, []table.SortField{sortField})
+
 	tbl, err := cat.CreateTable(ctx, tableIdent, icebergSchema,
+		catalog.WithPartitionSpec(&partitionSpec),
+		catalog.WithSortOrder(sortOrder),
 		catalog.WithProperties(map[string]string{
-			"owner": "me",
 			table.MetadataDeleteAfterCommitEnabledKey: "true",
 			table.MetadataPreviousVersionsMaxKey:      strconv.Itoa(1),
 			table.ManifestMergeEnabledKey:             "true",

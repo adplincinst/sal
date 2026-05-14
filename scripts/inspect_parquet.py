@@ -9,7 +9,9 @@
 A sample script to inspect one of the output parquet files that make up the iceberg table
 """
 
+from math import e
 from pathlib import Path
+from tkinter import W
 
 from pyarrow.parquet import ParquetFile
 
@@ -45,5 +47,10 @@ def inspect_parquet(path: str) -> None:
 if __name__ == "__main__":
     PATH = Path("/tmp/iceberg-warehouse/default/triples/data/")
     for path in PATH.iterdir():
-        inspect_parquet(path)
+        if path.is_dir():
+            for subpath in path.iterdir():
+                inspect_parquet(subpath)
+            break
+        else:
+            inspect_parquet(path)
         break
