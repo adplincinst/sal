@@ -76,7 +76,7 @@ func main() {
 		iceberg.PartitionField{SourceIDs: []int{2}, Transform: iceberg.TruncateTransform{Width: 20}, Name: "predicate_partition"},
 	)
 
-	sortField := table.SortField{SourceIDs: []int{2}, Direction: table.SortASC}
+	sortField := table.SortField{SourceIDs: []int{2}, Direction: table.SortASC, Transform: iceberg.IdentityTransform{}}
 	sortOrder, err := table.NewSortOrder(table.InitialSortOrderID, []table.SortField{sortField})
 
 	tbl, err := cat.CreateTable(ctx, tableIdent, icebergSchema,
