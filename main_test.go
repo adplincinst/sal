@@ -11,9 +11,6 @@ func TestParseArgs(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
 		got := parseArgs([]string{"/data/nquads"})
 
-		if !got.reset {
-			t.Fatal("parseArgs().reset = false, want true")
-		}
 		if got.inputDir != "/data/nquads" {
 			t.Fatalf("parseArgs().inputDir = %q, want %q", got.inputDir, "/data/nquads")
 		}
@@ -33,7 +30,6 @@ func TestParseArgs(t *testing.T) {
 
 	t.Run("overrides", func(t *testing.T) {
 		got := parseArgs([]string{
-			"--reset=false",
 			"--workers=3",
 			"--batch-size=1024",
 			"--compression=zstd",
@@ -42,9 +38,6 @@ func TestParseArgs(t *testing.T) {
 			"/data/nquads",
 		})
 
-		if got.reset {
-			t.Fatal("parseArgs().reset = true, want false")
-		}
 		if got.workers != 3 {
 			t.Fatalf("parseArgs().workers = %d, want 3", got.workers)
 		}
