@@ -1,0 +1,735 @@
+package build
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/knakk/rdf"
+	"github.com/piprate/json-gold/ld"
+)
+
+type validationError struct {
+	Path string
+	Line int
+	Term string
+}
+
+func (e validationError) Error() string {
+	return fmt.Sprintf("%s:%d: undefined term %s", e.Path, e.Line, e.Term)
+}
+
+type multiError []error
+
+func (e multiError) Error() string {
+	var sb strings.Builder
+	for i, err := range e {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(err.Error())
+	}
+	return sb.String()
+}
+
+type jsonLDContext struct {
+	prefixes map[string]string
+	vocab    string
+}
+
+type vocabulary struct {
+	terms map[string]bool
+}
+
+type vocabularyCache struct {
+	cacheDir string
+	cache    map[string]vocabulary
+	fetch    func(string) ([]byte, string, error)
+}
+
+const vocabularyCacheVersion = 7
+
+type usedTerm struct {
+	iri  string
+	line int
+}
+
+// Run validates JSON-LD files for terms that are not defined by their vocabularies.
+func Run(args []string, stdout, stderr io.Writer) int {
+	return run(args, stdout, stderr, ld.NewDefaultDocumentLoader(nil), fetchVocabularyDocument)
+}
+
+func run(args []string, stdout, stderr io.Writer, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) int {
+	fs := flag.NewFlagSet("build", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	paths := fs.Args()
+	if len(paths) == 0 {
+		fmt.Fprintln(stderr, "build: at least one JSON-LD file or directory is required")
+		return 2
+	}
+
+	files, err := expandInputs(paths)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(stderr, "build: no JSON-LD files found")
+		return 1
+	}
+
+	var errs multiError
+	for _, file := range files {
+		if err := validateJSONLDFile(file, loader, vocabFetch); err != nil {
+			if nested, ok := err.(multiError); ok {
+				errs = append(errs, nested...)
+			} else {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		fmt.Fprintln(stderr, errs.Error())
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "Validated %d JSON-LD file(s).\n", len(files))
+	return 0
+}
+
+func expandInputs(paths []string) ([]string, error) {
+	var files []string
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("build: %s: %w", path, err)
+		}
+		if !info.IsDir() {
+			if includeJSONLD(path) {
+				files = append(files, path)
+			}
+			continue
+		}
+		err = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && includeJSONLD(p) {
+				files = append(files, p)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build: walk %s: %w", path, err)
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func includeJSONLD(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".jsonld" || ext == ".json"
+}
+
+func validateJSONLDFile(path string, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("build: read %s: %w", path, err)
+	}
+
+	var doc any
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	if err := decoder.Decode(&doc); err != nil {
+		return fmt.Errorf("%s:%d: invalid JSON-LD: %w", path, jsonErrorLine(content, err), err)
+	}
+
+	processor := ld.NewJsonLdProcessor()
+	options := ld.NewJsonLdOptions("")
+	options.DocumentLoader = loader
+	if _, err := processor.Expand(doc, options); err != nil {
+		return fmt.Errorf("%s: invalid JSON-LD: %w", path, err)
+	}
+
+	ctx, err := collectContext(doc, loader)
+	if err != nil {
+		return fmt.Errorf("%s: load JSON-LD context: %w", path, err)
+	}
+	terms := collectUsedTerms(doc, splitLines(content), ctx, loader)
+	vocabs := vocabularyCache{
+		cacheDir: defaultVocabularyCacheDir(),
+		cache:    map[string]vocabulary{},
+		fetch:    vocabFetch,
+	}
+
+	var errs multiError
+	for _, term := range terms {
+		display, ok := displayTerm(term.iri, ctx)
+		if !ok {
+			continue
+		}
+		defined, err := vocabs.isDefined(term.iri, ctx)
+		if err != nil {
+			return fmt.Errorf("%s:%d: validate term %s: %w", path, term.line, display, err)
+		}
+		if defined {
+			continue
+		}
+		errs = append(errs, validationError{Path: path, Line: term.line, Term: display})
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	return nil
+}
+
+func collectContext(doc any, loader ld.DocumentLoader) (jsonLDContext, error) {
+	ctx := jsonLDContext{prefixes: map[string]string{}}
+	if err := collectContextFromNode(doc, &ctx, loader, map[string]bool{}); err != nil {
+		return ctx, err
+	}
+	return ctx, nil
+}
+
+func collectContextFromNode(node any, ctx *jsonLDContext, loader ld.DocumentLoader, seen map[string]bool) error {
+	switch n := node.(type) {
+	case map[string]any:
+		if value, ok := n["@context"]; ok {
+			if err := readContext(value, ctx, loader, seen); err != nil {
+				return err
+			}
+		}
+		for key, value := range n {
+			if key != "@context" {
+				if err := collectContextFromNode(value, ctx, loader, seen); err != nil {
+					return err
+				}
+			}
+		}
+	case []any:
+		for _, value := range n {
+			if err := collectContextFromNode(value, ctx, loader, seen); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func readContext(value any, ctx *jsonLDContext, loader ld.DocumentLoader, seen map[string]bool) error {
+	switch c := value.(type) {
+	case string:
+		if seen[c] {
+			return nil
+		}
+		seen[c] = true
+		doc, err := loader.LoadDocument(c)
+		if err != nil {
+			return err
+		}
+		if remoteCtx, ok := documentContext(doc.Document); ok {
+			return readContext(remoteCtx, ctx, loader, seen)
+		}
+		return readContext(doc.Document, ctx, loader, seen)
+	case []any:
+		for _, item := range c {
+			if err := readContext(item, ctx, loader, seen); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for key, item := range c {
+			switch {
+			case key == "@vocab":
+				if vocab, ok := item.(string); ok {
+					ctx.vocab = normalizeVocabularyBase(vocab)
+				}
+			case strings.HasPrefix(key, "@"):
+				continue
+			case !strings.Contains(key, ":"):
+				if base, ok := contextTermBase(item); ok {
+					ctx.prefixes[key] = normalizeVocabularyBase(base)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func documentContext(doc any) (any, bool) {
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	ctx, ok := m["@context"]
+	return ctx, ok
+}
+
+func contextTermBase(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		if looksLikeVocabularyBase(v) {
+			return v, true
+		}
+	case map[string]any:
+		id, ok := v["@id"].(string)
+		if ok && looksLikeVocabularyBase(id) {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+func collectUsedTerms(doc any, lines []string, ctx jsonLDContext, loader ld.DocumentLoader) []usedTerm {
+	var terms []usedTerm
+	walkJSONLDTerms(doc, ctx, &terms, lines, loader)
+	return terms
+}
+
+func walkJSONLDTerms(node any, ctx jsonLDContext, terms *[]usedTerm, lines []string, loader ld.DocumentLoader) {
+	switch n := node.(type) {
+	case map[string]any:
+		if value, ok := n["@context"]; ok {
+			_ = readContext(value, &ctx, loader, map[string]bool{})
+		}
+		for key, value := range n {
+			switch {
+			case key == "@context":
+				continue
+			case key == "@type":
+				collectTypeTerms(value, ctx, terms, lines)
+			case strings.HasPrefix(key, "@"):
+				walkJSONLDTerms(value, ctx, terms, lines, loader)
+			default:
+				if iri, ok := expandTerm(key, ctx); ok {
+					*terms = append(*terms, usedTerm{iri: iri, line: findJSONStringLine(lines, key)})
+				}
+				walkJSONLDTerms(value, ctx, terms, lines, loader)
+			}
+		}
+	case []any:
+		for _, value := range n {
+			walkJSONLDTerms(value, ctx, terms, lines, loader)
+		}
+	}
+}
+
+func collectTypeTerms(value any, ctx jsonLDContext, terms *[]usedTerm, lines []string) {
+	switch v := value.(type) {
+	case string:
+		if iri, ok := expandTerm(v, ctx); ok {
+			*terms = append(*terms, usedTerm{iri: iri, line: findJSONStringLine(lines, v)})
+		}
+	case []any:
+		for _, item := range v {
+			collectTypeTerms(item, ctx, terms, lines)
+		}
+	}
+}
+
+func expandTerm(term string, ctx jsonLDContext) (string, bool) {
+	if strings.HasPrefix(term, "@") {
+		return "", false
+	}
+	if colon := strings.IndexByte(term, ':'); colon > 0 {
+		prefix := term[:colon]
+		suffix := term[colon+1:]
+		if base, ok := ctx.prefixes[prefix]; ok {
+			return base + suffix, true
+		}
+		if isAbsoluteIRI(term) {
+			return term, true
+		}
+		return "", false
+	}
+	if ctx.vocab != "" {
+		return ctx.vocab + term, true
+	}
+	return "", false
+}
+
+func displayTerm(iri string, ctx jsonLDContext) (string, bool) {
+	prefix, base, ok := longestPrefixBase(iri, ctx)
+	if ok && prefix != "" {
+		return prefix + ":" + strings.TrimPrefix(iri, base), true
+	}
+	if ok {
+		return iri, true
+	}
+	for prefix, base := range ctx.prefixes {
+		if strings.HasPrefix(iri, base) {
+			return prefix + ":" + strings.TrimPrefix(iri, base), true
+		}
+	}
+	return iri, true
+}
+
+func longestPrefixBase(iri string, ctx jsonLDContext) (string, string, bool) {
+	bestPrefix := ""
+	bestBase := ""
+	if ctx.vocab != "" && strings.HasPrefix(iri, ctx.vocab) {
+		bestBase = ctx.vocab
+	}
+	for prefix, base := range ctx.prefixes {
+		if strings.HasPrefix(iri, base) && len(base) >= len(bestBase) {
+			bestPrefix = prefix
+			bestBase = base
+		}
+	}
+	return bestPrefix, bestBase, bestBase != ""
+}
+
+func (c *vocabularyCache) isDefined(iri string, ctx jsonLDContext) (bool, error) {
+	_, base, ok := longestPrefixBase(iri, ctx)
+	if !ok {
+		return true, nil
+	}
+	vocab, err := c.load(base)
+	if err != nil {
+		return false, err
+	}
+	return vocab.terms[iri], nil
+}
+
+func (c *vocabularyCache) load(base string) (vocabulary, error) {
+	base = vocabularyDocumentURL(base)
+	if vocab, ok := c.cache[base]; ok {
+		return vocab, nil
+	}
+
+	terms, err := c.loadTerms(base)
+	if err != nil {
+		return vocabulary{}, err
+	}
+	vocab := vocabulary{terms: terms}
+	c.cache[base] = vocab
+	return vocab, nil
+}
+
+func (c *vocabularyCache) loadTerms(base string) (map[string]bool, error) {
+	if terms, err := c.loadTermsFromDisk(base); err == nil {
+		return terms, nil
+	}
+
+	body, contentType, err := c.fetch(base)
+	if err != nil {
+		return nil, err
+	}
+	terms, err := extractVocabularyTerms(base, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.storeTermsToDisk(base, terms); err != nil {
+		return nil, err
+	}
+	return terms, nil
+}
+
+func defaultVocabularyCacheDir() string {
+	return filepath.Join("/tmp", "sal", "cache", "vocab")
+}
+
+type cachedVocabulary struct {
+	Version int      `json:"version"`
+	Base    string   `json:"base"`
+	Terms   []string `json:"terms"`
+}
+
+func (c *vocabularyCache) loadTermsFromDisk(base string) (map[string]bool, error) {
+	data, err := os.ReadFile(c.cachePath(base))
+	if err != nil {
+		return nil, err
+	}
+
+	var cached cachedVocabulary
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, err
+	}
+	if cached.Version != vocabularyCacheVersion {
+		return nil, fmt.Errorf("cache version mismatch")
+	}
+
+	terms := make(map[string]bool, len(cached.Terms))
+	for _, term := range cached.Terms {
+		terms[term] = true
+	}
+	return terms, nil
+}
+
+func (c *vocabularyCache) storeTermsToDisk(base string, terms map[string]bool) error {
+	if err := os.MkdirAll(c.cacheDir, 0755); err != nil {
+		return err
+	}
+
+	list := make([]string, 0, len(terms))
+	for term := range terms {
+		list = append(list, term)
+	}
+	sort.Strings(list)
+
+	payload, err := json.Marshal(cachedVocabulary{Version: vocabularyCacheVersion, Base: base, Terms: list})
+	if err != nil {
+		return err
+	}
+
+	tmpPath := c.cachePath(base) + ".tmp"
+	if err := os.WriteFile(tmpPath, payload, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, c.cachePath(base)); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func (c *vocabularyCache) cachePath(base string) string {
+	sum := sha256.Sum256([]byte(base))
+	return filepath.Join(c.cacheDir, hex.EncodeToString(sum[:])+".json")
+}
+
+func vocabularyDocumentURL(base string) string {
+	if index := strings.IndexByte(base, '#'); index >= 0 {
+		return base[:index]
+	}
+	return base
+}
+
+func extractVocabularyTerms(base, contentType string, body []byte) (map[string]bool, error) {
+	type parserFn struct {
+		name string
+		fn   func(string, []byte) (map[string]bool, error)
+	}
+
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	parsers := []parserFn{
+		{name: "json-ld", fn: func(_ string, body []byte) (map[string]bool, error) { return extractJSONLDVocabularyTerms(body) }},
+		{name: "turtle", fn: extractTurtleVocabularyTerms},
+		{name: "rdfxml", fn: extractRDFXMLVocabularyTerms},
+	}
+
+	switch {
+	case strings.Contains(mediaType, "json") || looksLikeJSON(body):
+		parsers[0], parsers[1], parsers[2] = parsers[0], parsers[1], parsers[2]
+	case strings.Contains(mediaType, "xml"):
+		parsers[0], parsers[1], parsers[2] = parsers[2], parsers[0], parsers[1]
+	case strings.Contains(mediaType, "turtle") || strings.Contains(mediaType, "n-triples") || strings.Contains(mediaType, "nquads") || looksLikeTurtle(body):
+		parsers[0], parsers[1], parsers[2] = parsers[1], parsers[0], parsers[2]
+	}
+
+	var errs []string
+	for _, parser := range parsers {
+		terms, err := parser.fn(base, body)
+		if err == nil {
+			return terms, nil
+		}
+		errs = append(errs, parser.name+": "+err.Error())
+	}
+	return nil, fmt.Errorf("unsupported vocabulary serialization for %s (%s): %s", base, contentType, strings.Join(errs, "; "))
+}
+
+func extractJSONLDVocabularyTerms(body []byte) (map[string]bool, error) {
+	var doc any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+
+	terms := map[string]bool{}
+	if ctx, err := collectContext(doc, ld.NewDefaultDocumentLoader(nil)); err == nil {
+		collectRawVocabularyIDs(doc, ctx, terms, ld.NewDefaultDocumentLoader(nil))
+	}
+
+	processor := ld.NewJsonLdProcessor()
+	options := ld.NewJsonLdOptions("")
+	options.DocumentLoader = ld.NewDefaultDocumentLoader(nil)
+	expanded, err := processor.Expand(doc, options)
+	if err != nil {
+		return nil, err
+	}
+
+	collectExpandedIDs(expanded, terms)
+	return terms, nil
+}
+
+func collectRawVocabularyIDs(node any, ctx jsonLDContext, terms map[string]bool, loader ld.DocumentLoader) {
+	switch n := node.(type) {
+	case []any:
+		for _, item := range n {
+			collectRawVocabularyIDs(item, ctx, terms, loader)
+		}
+	case map[string]any:
+		if value, ok := n["@context"]; ok {
+			_ = readContext(value, &ctx, loader, map[string]bool{})
+		}
+		if id, ok := n["@id"].(string); ok {
+			if iri, expanded := expandTerm(id, ctx); expanded {
+				terms[iri] = true
+			}
+		}
+		for key, value := range n {
+			if key == "@context" {
+				continue
+			}
+			collectRawVocabularyIDs(value, ctx, terms, loader)
+		}
+	}
+}
+
+func collectExpandedIDs(node any, terms map[string]bool) {
+	switch n := node.(type) {
+	case []any:
+		for _, item := range n {
+			collectExpandedIDs(item, terms)
+		}
+	case map[string]any:
+		if id, ok := n["@id"].(string); ok && id != "" && !strings.HasPrefix(id, "_:") {
+			terms[id] = true
+		}
+		for _, value := range n {
+			collectExpandedIDs(value, terms)
+		}
+	}
+}
+
+func extractTurtleVocabularyTerms(base string, body []byte) (map[string]bool, error) {
+	return extractTriplesVocabularyTerms(base, body, rdf.Turtle)
+}
+
+func extractRDFXMLVocabularyTerms(base string, body []byte) (map[string]bool, error) {
+	return extractTriplesVocabularyTerms(base, body, rdf.RDFXML)
+}
+
+func extractTriplesVocabularyTerms(base string, body []byte, format rdf.Format) (map[string]bool, error) {
+	dec := rdf.NewTripleDecoder(bytes.NewReader(body), format)
+	if iri, err := rdf.NewIRI(vocabularyDocumentURL(base)); err == nil {
+		_ = dec.SetOption(rdf.Base, iri)
+	}
+
+	terms := map[string]bool{}
+	for {
+		triple, err := dec.Decode()
+		if err == io.EOF {
+			return terms, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if subj, ok := triple.Subj.(rdf.IRI); ok {
+			terms[subj.String()] = true
+		}
+	}
+}
+
+func fetchVocabularyDocument(u string) ([]byte, string, error) {
+	req, err := http.NewRequest(http.MethodGet, u, http.NoBody)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/ld+json, application/json;q=0.9, text/turtle;q=0.8, application/rdf+xml;q=0.7, text/plain;q=0.6, */*;q=0.1")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, res.Header.Get("Content-Type"), err
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, res.Header.Get("Content-Type"), fmt.Errorf("bad response status code: %d", res.StatusCode)
+	}
+	return body, res.Header.Get("Content-Type"), nil
+}
+
+func looksLikeJSON(body []byte) bool {
+	for _, b := range body {
+		switch b {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func looksLikeTurtle(body []byte) bool {
+	s := strings.TrimSpace(string(body))
+	return strings.HasPrefix(s, "@prefix") || strings.HasPrefix(s, "PREFIX") || strings.HasPrefix(s, "@base") || strings.HasPrefix(s, "BASE ")
+}
+
+func normalizeVocabularyBase(value string) string {
+	return value
+}
+
+func looksLikeVocabularyBase(value string) bool {
+	return strings.HasSuffix(value, "/") || strings.HasSuffix(value, "#")
+}
+
+func isAbsoluteIRI(value string) bool {
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "urn:")
+}
+
+var jsonStringRE = regexp.MustCompile(`"((?:\\.|[^"\\])*)"`)
+
+func findJSONStringLine(lines []string, value string) int {
+	for i, line := range lines {
+		for _, match := range jsonStringRE.FindAllString(line, -1) {
+			if unquoteJSONString(match) == value {
+				return i + 1
+			}
+		}
+	}
+	return 1
+}
+
+func splitLines(content []byte) []string {
+	normalized := strings.ReplaceAll(string(content), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	return strings.Split(normalized, "\n")
+}
+
+func unquoteJSONString(quoted string) string {
+	var out string
+	if err := json.Unmarshal([]byte(quoted), &out); err != nil {
+		return ""
+	}
+	return out
+}
+
+func jsonErrorLine(content []byte, err error) int {
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	var offset int64
+	switch {
+	case errors.As(err, &syntaxErr):
+		offset = syntaxErr.Offset
+	case errors.As(err, &typeErr):
+		offset = typeErr.Offset
+	default:
+		return 1
+	}
+	if offset <= 0 {
+		return 1
+	}
+	return 1 + bytes.Count(content[:min(int(offset), len(content))], []byte("\n"))
+}

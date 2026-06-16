@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 
+	buildcmd "iceberg-triple-pattern-fragments/build"
+
 	"github.com/alexflint/go-arg"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
@@ -47,7 +49,20 @@ func (cliArgs) Description() string {
 type triple struct{ s, p, o string }
 
 func main() {
-	cfg := parseArgs(os.Args[1:])
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "build":
+			os.Exit(buildcmd.Run(os.Args[2:], os.Stdout, os.Stderr))
+		case "load":
+			runLoadCommand(os.Args[2:])
+			return
+		}
+	}
+	runLoadCommand(os.Args[1:])
+}
+
+func runLoadCommand(args []string) {
+	cfg := parseArgs(args)
 
 	ctx := context.Background()
 
