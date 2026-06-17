@@ -1,4 +1,4 @@
-module iceberg-triple-pattern-fragments
+module sal_cli
 
 go 1.25.5
 
@@ -6,6 +6,8 @@ require (
 	github.com/alexflint/go-arg v1.6.1
 	github.com/apache/arrow-go/v18 v18.6.0
 	github.com/apache/iceberg-go v0.5.1-0.20260512095853-be4cf4cfed61
+	github.com/knakk/rdf v0.0.0-20260317081859-15b52521cde6
+	github.com/lmittmann/tint v1.1.3
 	github.com/piprate/json-gold v0.8.0
 )
 
@@ -85,7 +87,6 @@ require (
 	github.com/gookit/color v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/knakk/rdf v0.0.0-20260317081859-15b52521cde6 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect

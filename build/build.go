@@ -525,11 +525,10 @@ func extractVocabularyTerms(base, contentType string, body []byte) (map[string]b
 
 	switch {
 	case strings.Contains(mediaType, "json") || looksLikeJSON(body):
-		parsers[0], parsers[1], parsers[2] = parsers[0], parsers[1], parsers[2]
 	case strings.Contains(mediaType, "xml"):
 		parsers[0], parsers[1], parsers[2] = parsers[2], parsers[0], parsers[1]
 	case strings.Contains(mediaType, "turtle") || strings.Contains(mediaType, "n-triples") || strings.Contains(mediaType, "nquads") || looksLikeTurtle(body):
-		parsers[0], parsers[1], parsers[2] = parsers[1], parsers[0], parsers[2]
+		parsers[0], parsers[1] = parsers[1], parsers[0]
 	}
 
 	var errs []string

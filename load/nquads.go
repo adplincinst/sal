@@ -1,4 +1,4 @@
-package main
+package load
 
 import (
 	"bufio"
@@ -16,6 +16,8 @@ var (
 	blankNodeLabelRE = regexp.MustCompile(`^[\p{L}\p{N}_][\p{L}\p{N}\p{M}_\-.]*$`)
 	langTagRE        = regexp.MustCompile(`^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*(--(ltr|rtl))?$`)
 )
+
+type triple struct{ s, p, o string }
 
 func parseNQuads(r io.Reader, handle func(triple) error) error {
 	br := bufio.NewReader(r)

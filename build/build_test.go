@@ -58,10 +58,10 @@ func TestRunValidatesSchemaOrgJSONLD(t *testing.T) {
 func TestRunReportsUndefinedTermFromArbitraryVocabulary(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "thing.jsonld")
-	writeTestFile(t, path, fmt.Sprintf(`{
+	writeTestFile(t, path, `{
   "@context": "https://example.com/context",
   "ex:Missing": "value"
-}`))
+}`)
 
 	var stdout, stderr bytes.Buffer
 	code := run(
@@ -87,10 +87,10 @@ func TestRunReportsUndefinedTermFromArbitraryVocabulary(t *testing.T) {
 func TestRunValidatesArbitraryVocabularyTerm(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "thing.jsonld")
-	writeTestFile(t, path, fmt.Sprintf(`{
+	writeTestFile(t, path, `{
   "@context": "https://example.com/context",
   "ex:Known": "value"
-}`))
+}`)
 
 	var stdout, stderr bytes.Buffer
 	code := run(
