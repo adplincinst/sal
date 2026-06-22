@@ -167,18 +167,14 @@ func validateJSONLDFile(path string, loader ld.DocumentLoader, vocabFetch func(s
 		return fmt.Errorf("%s:%d: invalid JSON-LD: %w", path, jsonErrorLine(content, err), err)
 	}
 
-	processor := ld.NewJsonLdProcessor()
-	options := ld.NewJsonLdOptions("")
-	options.DocumentLoader = loader
-	if _, err := processor.Expand(doc, options); err != nil {
-		return fmt.Errorf("%s: invalid JSON-LD: %w", path, err)
-	}
-
 	ctx, err := collectContext(doc, loader)
 	if err != nil {
 		return fmt.Errorf("%s: load JSON-LD context: %w", path, err)
 	}
-	terms := collectUsedTerms(doc, splitLines(content), ctx, loader)
+	terms, err := collectJSONLDTerms(content, loader)
+	if err != nil {
+		return fmt.Errorf("%s: invalid JSON-LD: %w", path, err)
+	}
 	return validateTerms(path, terms, ctx, vocabFetch)
 }
 
@@ -373,51 +369,46 @@ func contextTermBase(value any) (string, bool) {
 	return "", false
 }
 
-func collectUsedTerms(doc any, lines []string, ctx jsonLDContext, loader ld.DocumentLoader) []usedTerm {
-	var terms []usedTerm
-	walkJSONLDTerms(doc, ctx, &terms, lines, loader)
-	return terms
-}
-
-func walkJSONLDTerms(node any, ctx jsonLDContext, terms *[]usedTerm, lines []string, loader ld.DocumentLoader) {
-	switch n := node.(type) {
-	case map[string]any:
-		if value, ok := n["@context"]; ok {
-			_ = readContext(value, &ctx, loader, map[string]bool{})
-		}
-		for key, value := range n {
-			switch {
-			case key == "@context":
-				continue
-			case key == "@type":
-				collectTypeTerms(value, ctx, terms, lines)
-			case strings.HasPrefix(key, "@"):
-				walkJSONLDTerms(value, ctx, terms, lines, loader)
-			default:
-				if iri, ok := expandTerm(key, ctx); ok {
-					*terms = append(*terms, usedTerm{iri: iri, line: findJSONStringLine(lines, key)})
-				}
-				walkJSONLDTerms(value, ctx, terms, lines, loader)
-			}
-		}
-	case []any:
-		for _, value := range n {
-			walkJSONLDTerms(value, ctx, terms, lines, loader)
+func collectJSONLDTerms(content []byte, loader ld.DocumentLoader) ([]usedTerm, error) {
+	provenance := map[string]int{}
+	processor := ld.NewJsonLdProcessor()
+	options := ld.NewJsonLdOptions("")
+	options.DocumentLoader = loader
+	options.RDFQuadProvenanceCallback = func(quad *ld.Quad, prov ld.RDFQuadProvenance) {
+		addJSONLDProvenanceTerm(provenance, quad.Subject, prov.SubjectLine)
+		addJSONLDProvenanceTerm(provenance, quad.Predicate, prov.PredicateLine)
+		addJSONLDProvenanceTerm(provenance, quad.Object, prov.ObjectLine)
+		if quad.Graph != nil {
+			addJSONLDProvenanceTerm(provenance, quad.Graph, prov.GraphLine)
 		}
 	}
+
+	if _, err := processor.ToRDF(bytes.NewReader(content), options); err != nil {
+		return nil, err
+	}
+
+	terms := make([]usedTerm, 0, len(provenance))
+	for iri, line := range provenance {
+		terms = append(terms, usedTerm{iri: iri, line: line})
+	}
+	sort.Slice(terms, func(i, j int) bool {
+		if terms[i].line != terms[j].line {
+			return terms[i].line < terms[j].line
+		}
+		return terms[i].iri < terms[j].iri
+	})
+	return terms, nil
 }
 
-func collectTypeTerms(value any, ctx jsonLDContext, terms *[]usedTerm, lines []string) {
-	switch v := value.(type) {
-	case string:
-		if iri, ok := expandTerm(v, ctx); ok {
-			*terms = append(*terms, usedTerm{iri: iri, line: findJSONStringLine(lines, v)})
-		}
-	case []any:
-		for _, item := range v {
-			collectTypeTerms(item, ctx, terms, lines)
-		}
+func addJSONLDProvenanceTerm(provenance map[string]int, node ld.Node, line int) {
+	if line <= 0 || !ld.IsIRI(node) {
+		return
 	}
+	iri := node.GetValue()
+	if existing, ok := provenance[iri]; ok && existing <= line {
+		return
+	}
+	provenance[iri] = line
 }
 
 func expandTerm(term string, ctx jsonLDContext) (string, bool) {
@@ -853,33 +844,6 @@ func looksLikeVocabularyBase(value string) bool {
 
 func isAbsoluteIRI(value string) bool {
 	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "urn:")
-}
-
-var jsonStringRE = regexp.MustCompile(`"((?:\\.|[^"\\])*)"`)
-
-func findJSONStringLine(lines []string, value string) int {
-	for i, line := range lines {
-		for _, match := range jsonStringRE.FindAllString(line, -1) {
-			if unquoteJSONString(match) == value {
-				return i + 1
-			}
-		}
-	}
-	return 1
-}
-
-func splitLines(content []byte) []string {
-	normalized := strings.ReplaceAll(string(content), "\r\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\r", "\n")
-	return strings.Split(normalized, "\n")
-}
-
-func unquoteJSONString(quoted string) string {
-	var out string
-	if err := json.Unmarshal([]byte(quoted), &out); err != nil {
-		return ""
-	}
-	return out
 }
 
 func jsonErrorLine(content []byte, err error) int {

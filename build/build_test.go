@@ -56,6 +56,39 @@ func TestRunValidatesSchemaOrgJSONLD(t *testing.T) {
 	}
 }
 
+func TestCollectJSONLDTermsUsesRDFQuadProvenanceLines(t *testing.T) {
+	terms, err := collectJSONLDTerms([]byte(`{
+  "@context": {
+    "name": "http://schema.org/name",
+    "knows": {"@id": "http://schema.org/knows", "@type": "@id"}
+  },
+  "@id": "http://example.com/alice",
+  "name": "Alice",
+  "knows": {
+    "name": {"@value": "Bob"},
+    "@id": "http://example.com/bob"
+  }
+}`), ld.NewDefaultDocumentLoader(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]int{}
+	for _, term := range terms {
+		got[term.iri] = term.line
+	}
+
+	for iri, line := range map[string]int{
+		"http://schema.org/name":  7,
+		"http://schema.org/knows": 8,
+		"http://example.com/bob":  8,
+	} {
+		if got[iri] != line {
+			t.Fatalf("term %s line = %d, want %d; terms = %#v", iri, got[iri], line, terms)
+		}
+	}
+}
+
 func TestRunReportsUndefinedTermFromArbitraryVocabulary(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "thing.jsonld")
