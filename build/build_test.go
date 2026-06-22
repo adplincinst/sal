@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/piprate/json-gold/ld"
+	"github.com/cgs-earth/json-gold/ld"
 )
 
 const testSchemaOrgBase = "http://schema.org/"

@@ -17,8 +17,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cgs-earth/json-gold/ld"
 	"github.com/knakk/rdf"
-	"github.com/piprate/json-gold/ld"
 )
 
 type validationError struct {
