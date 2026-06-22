@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -472,8 +473,8 @@ func longestPrefixBase(iri string, ctx jsonLDContext) (string, string, bool) {
 }
 
 func (c *vocabularyCache) isDefined(iri string, ctx jsonLDContext) (bool, error) {
-	if strings.HasPrefix(iri, xsdNamespaceIRI) {
-		return xsdBuiltinDatatypeLocalNames[strings.TrimPrefix(iri, xsdNamespaceIRI)], nil
+	if iriWithoutXsdNamepace, found := strings.CutPrefix(iri, xsdNamespaceIRI); found {
+		return slices.Contains(xsdBuiltinDatatypeLocalNames, iriWithoutXsdNamepace), nil
 	}
 
 	_, base, ok := longestPrefixBase(iri, ctx)
