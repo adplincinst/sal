@@ -23,8 +23,8 @@ import (
 )
 
 type BuildCmd struct {
-	paths      []string          `arg:"positional"`
-	prefix_map map[string]string `arg:"--prefix-map"`
+	Paths      []string          `arg:"positional" help:"RDF files to validate"`
+	PrefixMaps map[string]string `arg:"--prefix-maps" help:"prefix mappings to apply"`
 }
 
 type jsonLDContext struct {
@@ -42,8 +42,11 @@ type usedTerm struct {
 }
 
 // Run validates RDF files for terms that are not defined by their vocabularies.
-func Run(args []string, stdout, stderr io.Writer) int {
-	return run(args, stdout, stderr, ld.NewDefaultDocumentLoader(nil), fetchVocabularyDocument)
+func Run(cfg *BuildCmd, stdout, stderr io.Writer) int {
+	if cfg == nil {
+		return 0
+	}
+	return run(cfg.Paths, stdout, stderr, ld.NewDefaultDocumentLoader(nil), fetchVocabularyDocument)
 }
 
 func run(paths []string, stdout, stderr io.Writer, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) int {

@@ -28,7 +28,7 @@ type LoadCmd struct {
 	MaxFiles            int    `arg:"--max-files" help:"maximum number of input files to process" default:"0"`
 }
 
-func RunLoadCommand(cfg *LoadCmd) {
+func Run(cfg *LoadCmd) {
 
 	ctx := context.Background()
 
