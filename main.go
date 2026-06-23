@@ -33,12 +33,18 @@ func main() {
 
 	var cli args
 	arg.MustParse(&cli)
+	var err error
 	switch {
 	case cli.Build != nil:
+		// todo change this to an error var
 		build.Run(cli.Build, os.Stdout, os.Stderr)
 	case cli.Load != nil:
 		load.Run(cli.Load)
 	case cli.Init != nil:
-		initialization.Run(cli.Init)
+		err = initialization.Run(cli.Init)
+	}
+	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
 	}
 }
