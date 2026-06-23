@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cgs-earth/json-gold/ld"
+	"github.com/stretchr/testify/require"
 )
 
 const testSchemaOrgBase = "http://schema.org/"
@@ -214,6 +215,39 @@ func TestRunValidatesBuiltinXSDDatatype(t *testing.T) {
 
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
+	}
+}
+
+func TestRunValidatesJSONLDTestdata(t *testing.T) {
+	cases := []struct {
+		dir      string
+		wantCode int
+	}{
+		{dir: filepath.Join("testdata", "correct"), wantCode: 0},
+		{dir: filepath.Join("testdata", "incorrect"), wantCode: 1},
+	}
+
+	for _, tc := range cases {
+		var paths []string
+		err := filepath.WalkDir(tc.dir, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() && strings.EqualFold(filepath.Ext(path), ".jsonld") {
+				paths = append(paths, path)
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, paths)
+
+		for _, path := range paths {
+			t.Run(filepath.ToSlash(path), func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				code := run([]string{path}, &stdout, &stderr, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+				require.Equalf(t, tc.wantCode, code, "stdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+			})
+		}
 	}
 }
 

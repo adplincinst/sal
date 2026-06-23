@@ -6,7 +6,7 @@ require (
 	github.com/alexflint/go-arg v1.6.1
 	github.com/apache/arrow-go/v18 v18.6.0
 	github.com/apache/iceberg-go v0.5.1-0.20260512095853-be4cf4cfed61
-	github.com/cgs-earth/json-gold v0.0.0-20260622135313-62ce2b83a4a6
+	github.com/cgs-earth/json-gold v0.0.0-20260623123334-63cdb5b88cb8
 	github.com/lmittmann/tint v1.1.3
 	github.com/tggo/goRDFlib v0.1.12
 )

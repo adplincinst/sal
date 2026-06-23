@@ -1,0 +1,13 @@
+{
+    "@context": {
+        "@vocab": "https://schema.org/",
+        "schema": "https://schema.org/",
+        "hyf": "https://www.opengis.net/def/schema/hy_features/hyf/"
+    },
+    "@id": "https://geoconnex.us/iow/wqp/NALMS-F871468",
+    "@type": [
+        "hyf:HY_HydrometricFeature",
+        "hyf:HY_HydroLocation",
+        "PlaceEE"
+    ]
+}
