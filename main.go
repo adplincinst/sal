@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cgs-earth/sal-cli/build"
+	"github.com/cgs-earth/sal-cli/initialization"
 	"github.com/cgs-earth/sal-cli/load"
 
 	"github.com/alexflint/go-arg"
@@ -13,8 +14,9 @@ import (
 )
 
 type args struct {
-	Load  *load.LoadCmd   `arg:"subcommand:load" help:"Load N-Quads gzip files into a local Iceberg triples table."`
-	Build *build.BuildCmd `arg:"subcommand:build" help:"Build a vocabulary."`
+	Load  *load.LoadCmd           `arg:"subcommand:load" help:"Load N-Quads gzip files into a local Iceberg triples table."`
+	Build *build.BuildCmd         `arg:"subcommand:build" help:"Build a vocabulary."`
+	Init  *initialization.InitCmd `arg:"subcommand:init" help:"Initialize a SAL project."`
 }
 
 func (args) Description() string {
@@ -36,5 +38,7 @@ func main() {
 		build.Run(cli.Build, os.Stdout, os.Stderr)
 	case cli.Load != nil:
 		load.Run(cli.Load)
+	case cli.Init != nil:
+		initialization.Run(cli.Init)
 	}
 }
