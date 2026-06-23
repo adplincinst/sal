@@ -1,6 +1,7 @@
 package initialization
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -19,24 +20,30 @@ type InitCmd struct {
 
 func Run(cmd *InitCmd) error {
 
-	gitCmd := exec.Command("git", "remote")
-	out, err := gitCmd.Output()
+	gitCmd := exec.Command("git", "remote", "-v")
+	out, err := gitCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("current directory is not a git repository: %w", err)
+		var exitErr *exec.ExitError
+
+		switch {
+		case errors.Is(err, exec.ErrNotFound):
+			return fmt.Errorf("git is not installed or not in PATH; you must have git installed for SAL")
+
+		case errors.As(err, &exitErr):
+			log := string(out)
+			if strings.Contains(log, "not a git repository") {
+				return fmt.Errorf("current directory is not a git repository; SAL must be ran inside a git repository")
+			}
+
+			return fmt.Errorf("git command failed: %s", strings.TrimSpace(log))
+
+		default:
+			return fmt.Errorf("failed to execute git: %w", err)
+		}
 	}
 
 	if strings.TrimSpace(string(out)) == "" {
-		return fmt.Errorf("git repository has no remotes configured")
-	}
-
-	// Verify this git repository has at least one remote configured.
-	out, err = exec.Command("git", "remote", "-v").Output()
-	if err != nil {
-		return fmt.Errorf("failed to check git remotes: %w", err)
-	}
-
-	if len(out) == 0 {
-		return fmt.Errorf("no git remotes configured; add an associated git repository before running init")
+		return fmt.Errorf("git repository has no remotes configured; you must specify a remote before running init")
 	}
 
 	cwd, err := os.Getwd()
