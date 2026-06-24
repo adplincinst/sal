@@ -39,31 +39,28 @@ type usedTerm struct {
 }
 
 // Run validates RDF files for terms that are not defined by their vocabularies.
-func Run(cfg *BuildCmd, stdout, stderr io.Writer) int {
+func Run(cfg *BuildCmd, stdout, stderr io.Writer) error {
 	if cfg == nil {
-		return 0
+		return fmt.Errorf("build: missing arguments")
 	}
 	fetch := fetchVocabularyDocument
 	if len(cfg.PrefixMaps) > 0 {
 		var err error
 		fetch, err = prefixMappedVocabularyFetch(cfg.PrefixMaps, fetchVocabularyDocument)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
+			return err
 		}
 	}
 	return run(cfg.Paths, stdout, stderr, ld.NewDefaultDocumentLoader(nil), fetch)
 }
 
-func run(paths []string, stdout, stderr io.Writer, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) int {
+func run(paths []string, stdout, stderr io.Writer, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) error {
 	files, err := expandInputs(paths)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		return err
 	}
 	if len(files) == 0 {
-		fmt.Fprintln(stderr, "build: no RDF files found")
-		return 1
+		return fmt.Errorf("no files found")
 	}
 
 	var errs multiError
@@ -77,12 +74,11 @@ func run(paths []string, stdout, stderr io.Writer, loader ld.DocumentLoader, voc
 		}
 	}
 	if len(errs) > 0 {
-		fmt.Fprintln(stderr, errs.Error())
-		return 1
+		return errs
 	}
 
-	fmt.Fprintf(stdout, "Validated %d RDF file(s).\n", len(files))
-	return 0
+	slog.Info("Validated" + fmt.Sprint(len(files)) + " file(s)")
+	return nil
 }
 
 func expandInputs(paths []string) ([]string, error) {

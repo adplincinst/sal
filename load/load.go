@@ -20,55 +20,57 @@ type LoadCmd struct {
 	Workers             int    `arg:"--workers" help:"number of input files to convert to Parquet in parallel" default:"8"`
 	ParquetCompression  string `arg:"--compression" help:"Parquet compression codec: snappy, zstd, gzip, brotli, lz4, uncompressed" default:"snappy"`
 	MetricsMode         string `arg:"--metrics-mode" help:"Iceberg metrics mode: none, counts, truncate(N), full" default:"truncate(16)"`
-	TargetFileSizeBytes int64  `arg:"--target-file-size-bytes" help:"target Iceberg data file size"`
+	TargetFileSizeBytes int64  `arg:"--target-file-size-bytes" help:"target Iceberg data file size" default:"0"`
 	InputDir            string `arg:"positional,required" placeholder:"PATH" help:"path to a directory containing .nq.gz files"`
 	MaxFiles            int    `arg:"--max-files" help:"maximum number of input files to process" default:"0"`
 	Warehouse           string `arg:"--warehouse" help:"Iceberg warehouse directory" default:"/tmp/iceberg-warehouse"`
 	Namespace           string `arg:"--namespace" help:"Iceberg namespace" default:"default"`
 }
 
-func Run(cfg *LoadCmd) {
+func Run(cfg *LoadCmd) error {
 
 	ctx := context.Background()
 
 	cat, err := hadoop.NewCatalog("local-catalog", cfg.Warehouse, nil)
 	if err != nil {
-		log.Fatal("Failed to create catalog:", err)
+		return fmt.Errorf("Failed to create catalog: %w", err)
 	}
 
 	tbl, err := NewIcebergTableFromCfg(ctx, cat, cfg)
 	if err != nil {
-		slog.Error("Failed to create Iceberg table", "err", err)
-		return
+		return fmt.Errorf("Failed to create Iceberg table: %w", err)
 	}
 
 	pattern := filepath.Join(cfg.InputDir, "*.nq.gz")
 	files, err := filepath.Glob(pattern)
 	if err != nil {
-		log.Fatal("Glob error:", err)
+		return err
 	}
 	if len(files) == 0 {
-		slog.Error("No .nq.gz files found", "input_dir", cfg.InputDir)
-		return
+		return fmt.Errorf("no .nq.gz files found in %s", cfg.InputDir)
 	}
 	if cfg.MaxFiles > 0 && len(files) > cfg.MaxFiles {
 		files = files[:cfg.MaxFiles]
 	}
-	log.Printf("Found %d .nq.gz file(s)", len(files))
+	slog.Info("Found" + fmt.Sprint(len(files)) + ".nq.gz file(s)")
 
 	if err := applyWriteProperties(ctx, tbl, cfg); err != nil {
-		log.Fatal("Failed to apply write properties:", err)
+		return err
 	}
-
-	log.Printf("Write settings: workers=%d batch-size=%d compression=%s metrics=%s target-file-size=%d",
-		cfg.Workers, cfg.BatchSize, cfg.ParquetCompression, cfg.MetricsMode, cfg.TargetFileSizeBytes)
+	slog.Info("Write settings",
+		"workers", cfg.Workers,
+		"batch_size", cfg.BatchSize,
+		"compression", cfg.ParquetCompression,
+		"metrics", cfg.MetricsMode,
+		"target_file_size", cfg.TargetFileSizeBytes,
+	)
 
 	if err := processFiles(ctx, files, cat, tbl.Identifier(), arrowSchema, cfg.BatchSize, cfg.Workers); err != nil {
-		log.Fatalf("Error processing files: %v", err)
+		return err
 	}
 
-	log.Println("All files loaded successfully.")
-	log.Println("Table location:", tbl.Location())
+	slog.Info("All files loaded successfully. Table present at " + tbl.Location())
+	return nil
 }
 
 // processFiles writes each .nq.gz input to Iceberg data files in parallel, then

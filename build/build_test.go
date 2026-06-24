@@ -19,18 +19,14 @@ const testSchemaOrgBase = "http://schema.org/"
 func TestRunReportsUndefinedSchemaOrgTermWithLineNumber(t *testing.T) {
 	path := filepath.Join("testdata", "incorrect", "name.jsonld")
 
-	var stdout, stderr bytes.Buffer
-	code := run([]string{path}, &stdout, &stderr, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
-
-	if code != 1 {
-		t.Fatalf("Run() code = %d, want 1", code)
-	}
-	got := stderr.String()
+	err := run([]string{path}, nil, nil, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+	require.Error(t, err)
+	got := err.Error()
 	if !strings.Contains(got, path+":4:") {
-		t.Fatalf("Run() stderr = %q, want line 4", got)
+		t.Fatalf("Run() error = %q, want line 4", got)
 	}
 	if !strings.Contains(got, "undefined term schema:namee") {
-		t.Fatalf("Run() stderr = %q, want undefined schema:namee", got)
+		t.Fatalf("Run() error = %q, want undefined schema:namee", got)
 	}
 }
 
@@ -46,15 +42,8 @@ func TestRunValidatesSchemaOrgJSONLD(t *testing.T) {
   "url": "http://www.janedoe.com"
 }`)
 
-	var stdout, stderr bytes.Buffer
-	code := run([]string{path}, &stdout, &stderr, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
-
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "Validated 1 RDF file(s).") {
-		t.Fatalf("Run() stdout = %q", stdout.String())
-	}
+	err := run([]string{path}, nil, nil, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+	require.NoError(t, err)
 }
 
 func TestCollectJSONLDTermsUsesRDFQuadProvenanceLines(t *testing.T) {
@@ -98,24 +87,21 @@ func TestRunReportsUndefinedTermFromArbitraryVocabulary(t *testing.T) {
   "ex:Missing": "value"
 }`)
 
-	var stdout, stderr bytes.Buffer
-	code := run(
+	err := run(
 		[]string{path},
-		&stdout,
-		&stderr,
+		nil,
+		nil,
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
 	)
 
-	if code != 1 {
-		t.Fatalf("Run() code = %d, want 1", code)
-	}
-	got := stderr.String()
+	require.Error(t, err)
+	got := err.Error()
 	if !strings.Contains(got, path+":3:") {
-		t.Fatalf("Run() stderr = %q, want line 3", got)
+		t.Fatalf("Run() error = %q, want line 3", got)
 	}
 	if !strings.Contains(got, "undefined term ex:Missing") {
-		t.Fatalf("Run() stderr = %q, want undefined ex:Missing", got)
+		t.Fatalf("Run() error = %q, want undefined ex:Missing", got)
 	}
 }
 
@@ -127,18 +113,15 @@ func TestRunValidatesArbitraryVocabularyTerm(t *testing.T) {
   "ex:Known": "value"
 }`)
 
-	var stdout, stderr bytes.Buffer
-	code := run(
+	err := run(
 		[]string{path},
-		&stdout,
-		&stderr,
+		nil,
+		nil,
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
 	)
 
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
-	}
+	require.NoError(t, err)
 }
 
 func TestRunReportsUndefinedTurtleTermWithLineNumber(t *testing.T) {
@@ -150,24 +133,21 @@ ex:Known ex:Known ex:Known ,
                    ex:Missing .
 `)
 
-	var stdout, stderr bytes.Buffer
-	code := run(
+	err := run(
 		[]string{path},
-		&stdout,
-		&stderr,
+		nil,
+		nil,
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
 	)
 
-	if code != 1 {
-		t.Fatalf("Run() code = %d, want 1", code)
-	}
-	got := stderr.String()
+	require.Error(t, err)
+	got := err.Error()
 	if !strings.Contains(got, path+":4:") {
-		t.Fatalf("Run() stderr = %q, want line 4", got)
+		t.Fatalf("Run() error = %q, want line 4", got)
 	}
 	if !strings.Contains(got, "undefined term ex:Missing") {
-		t.Fatalf("Run() stderr = %q, want undefined ex:Missing", got)
+		t.Fatalf("Run() error = %q, want undefined ex:Missing", got)
 	}
 }
 
@@ -179,21 +159,15 @@ func TestRunValidatesTurtleTerm(t *testing.T) {
 ex:Known ex:Known ex:Known .
 `)
 
-	var stdout, stderr bytes.Buffer
-	code := run(
+	err := run(
 		[]string{path},
-		&stdout,
-		&stderr,
+		nil,
+		nil,
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
 	)
 
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "Validated 1 RDF file(s).") {
-		t.Fatalf("Run() stdout = %q", stdout.String())
-	}
+	require.NoError(t, err)
 }
 
 func TestRunValidatesBuiltinXSDDatatype(t *testing.T) {
@@ -204,27 +178,24 @@ func TestRunValidatesBuiltinXSDDatatype(t *testing.T) {
 [] <https://example.com/prop> "value"^^xsd:string .
 `)
 
-	var stdout, stderr bytes.Buffer
-	code := run(
+	err := run(
 		[]string{path},
-		&stdout,
-		&stderr,
+		nil,
+		nil,
 		exampleVocabularyLoader{},
 		func(u string) ([]byte, string, error) { return nil, "", fmt.Errorf("unexpected url %s", u) },
 	)
 
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
-	}
+	require.NoError(t, err)
 }
 
 func TestRunValidatesJSONLDTestdata(t *testing.T) {
 	cases := []struct {
-		dir      string
-		wantCode int
+		dir     string
+		wantErr bool
 	}{
-		{dir: filepath.Join("testdata", "correct"), wantCode: 0},
-		{dir: filepath.Join("testdata", "incorrect"), wantCode: 1},
+		{dir: filepath.Join("testdata", "correct"), wantErr: false},
+		{dir: filepath.Join("testdata", "incorrect"), wantErr: true},
 	}
 
 	for _, tc := range cases {
@@ -243,9 +214,12 @@ func TestRunValidatesJSONLDTestdata(t *testing.T) {
 
 		for _, path := range paths {
 			t.Run(filepath.ToSlash(path), func(t *testing.T) {
-				var stdout, stderr bytes.Buffer
-				code := run([]string{path}, &stdout, &stderr, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
-				require.Equalf(t, tc.wantCode, code, "stdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+				err := run([]string{path}, nil, nil, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+				if tc.wantErr {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
 			})
 		}
 	}
@@ -259,21 +233,18 @@ func TestRunReportsUnknownXSDDatatypeAsUndefinedTerm(t *testing.T) {
 [] <https://example.com/prop> "value"^^xsd:madeUpType .
 `)
 
-	var stdout, stderr bytes.Buffer
-	code := run(
+	err := run(
 		[]string{path},
-		&stdout,
-		&stderr,
+		nil,
+		nil,
 		exampleVocabularyLoader{},
 		func(u string) ([]byte, string, error) { return nil, "", fmt.Errorf("unexpected url %s", u) },
 	)
 
-	if code != 1 {
-		t.Fatalf("Run() code = %d, want 1", code)
-	}
-	got := stderr.String()
+	require.Error(t, err)
+	got := err.Error()
 	if !strings.Contains(got, "undefined term xsd:madeUpType") {
-		t.Fatalf("Run() stderr = %q, want undefined xsd:madeUpType", got)
+		t.Fatalf("Run() error = %q, want undefined xsd:madeUpType", got)
 	}
 }
 
@@ -285,11 +256,10 @@ func TestRunValidatesTermFromRDFXMLVocabulary(t *testing.T) {
 ex:Alice ex:name "Alice" .
 `)
 
-	var stdout, stderr bytes.Buffer
-	code := run(
+	err := run(
 		[]string{path},
-		&stdout,
-		&stderr,
+		nil,
+		nil,
 		exampleVocabularyLoader{},
 		func(u string) ([]byte, string, error) {
 			if u != "http://example.org/" {
@@ -305,9 +275,7 @@ ex:Alice ex:name "Alice" .
 		},
 	)
 
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
-	}
+	require.NoError(t, err)
 }
 
 func TestRunExpandsInputDirectories(t *testing.T) {
@@ -319,15 +287,8 @@ func TestRunExpandsInputDirectories(t *testing.T) {
 }`)
 	writeTestFile(t, filepath.Join(dir, "skip.ttl"), "@prefix ex: <https://example.com/> .\n")
 
-	var stdout, stderr bytes.Buffer
-	code := run([]string{dir}, &stdout, &stderr, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
-
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stderr = %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "Validated 2 RDF file(s).") {
-		t.Fatalf("Run() stdout = %q", stdout.String())
-	}
+	err := run([]string{dir}, nil, nil, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+	require.NoError(t, err)
 }
 
 func TestExtractRDFXMLVocabularyTermsTypedNode(t *testing.T) {

@@ -43,10 +43,9 @@ func main() {
 	var err error
 	switch {
 	case cli.Build != nil:
-		// todo change this to an error var
-		build.Run(cli.Build, os.Stdout, os.Stderr)
+		err = build.Run(cli.Build, os.Stdout, os.Stderr)
 	case cli.Load != nil:
-		load.Run(cli.Load)
+		err = load.Run(cli.Load)
 	case cli.Init != nil:
 		err = initialization.Run(cli.Init)
 	}
