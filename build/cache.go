@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cgs-earth/sal-cli/build/vocab"
+	"github.com/cgs-earth/sal/build/vocab"
 )
 
 type vocabularyCache struct {

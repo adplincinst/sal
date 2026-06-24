@@ -8,5 +8,5 @@ copy_geoconnex_graph:
 	gsutil -m cp -r gs://harvest-geoconnex-us/graphs/latest testdata/
 
 install:
-	go build . 
-	mv ./sal-cli ~/.local/bin
+	go build -o sal . 
+	mv ./sal ~/.local/bin

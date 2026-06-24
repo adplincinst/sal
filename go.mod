@@ -1,4 +1,4 @@
-module github.com/cgs-earth/sal-cli
+module github.com/cgs-earth/sal
 
 go 1.25.8
 

@@ -5,18 +5,20 @@ import (
 	"os"
 	"time"
 
-	"github.com/cgs-earth/sal-cli/build"
-	"github.com/cgs-earth/sal-cli/initialization"
-	"github.com/cgs-earth/sal-cli/load"
+	"github.com/cgs-earth/sal/build"
+	"github.com/cgs-earth/sal/initialization"
+	"github.com/cgs-earth/sal/load"
 
 	"github.com/alexflint/go-arg"
 	"github.com/lmittmann/tint"
 )
 
+// All subcommands that sal supports. These should be in a useful order as
+// the order changes how the CLI presents them in the help message.
 type args struct {
+	Init  *initialization.InitCmd `arg:"subcommand:init" help:"Initialize a SAL project."`
 	Load  *load.LoadCmd           `arg:"subcommand:load" help:"Load N-Quads gzip files into a local Iceberg triples table."`
 	Build *build.BuildCmd         `arg:"subcommand:build" help:"Build a vocabulary."`
-	Init  *initialization.InitCmd `arg:"subcommand:init" help:"Initialize a SAL project."`
 }
 
 func (args) Description() string {
@@ -24,12 +26,17 @@ func (args) Description() string {
 }
 
 func main() {
+
 	slog.SetDefault(slog.New(
 		tint.NewHandler(os.Stderr, &tint.Options{
 			Level:      slog.LevelDebug,
 			TimeFormat: time.Kitchen,
 		}),
 	))
+
+	if len(os.Args) == 1 {
+		os.Args = append(os.Args, "--help")
+	}
 
 	var cli args
 	arg.MustParse(&cli)
