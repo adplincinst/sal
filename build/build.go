@@ -58,7 +58,11 @@ func Run(cfg *BuildCmd) error {
 			return err
 		}
 	}
-	return run(paths, ld.NewDefaultDocumentLoader(nil), fetch)
+	base, err := salpkg.DefaultGitRemote()
+	if err != nil {
+		return err
+	}
+	return run(paths, ld.NewDefaultDocumentLoader(nil), fetch, base)
 }
 
 func buildPaths(paths []string) ([]string, error) {
@@ -72,7 +76,7 @@ func buildPaths(paths []string) ([]string, error) {
 	return []string{projectDir}, nil
 }
 
-func run(paths []string, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) error {
+func run(paths []string, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error), base string) error {
 	files, err := expandInputs(paths)
 	if err != nil {
 		return err
@@ -83,7 +87,7 @@ func run(paths []string, loader ld.DocumentLoader, vocabFetch func(string) ([]by
 
 	var errs multiError
 	for _, file := range files {
-		if err := validateRDFFile(file, loader, vocabFetch); err != nil {
+		if err := validateRDFFile(file, loader, vocabFetch, base); err != nil {
 			if nested, ok := err.(multiError); ok {
 				errs = append(errs, nested...)
 			} else {
@@ -134,16 +138,16 @@ func includeRDFInput(path string) bool {
 	return ext == ".jsonld" || ext == ".json" || ext == ".ttl" || ext == ".turtle"
 }
 
-func validateRDFFile(path string, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) error {
+func validateRDFFile(path string, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error), base string) error {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".ttl", ".turtle":
-		return validateTurtleFile(path, vocabFetch)
+		return validateTurtleFile(path, vocabFetch, base)
 	default:
-		return validateJSONLDFile(path, loader, vocabFetch)
+		return validateJSONLDFile(path, loader, vocabFetch, base)
 	}
 }
 
-func validateJSONLDFile(path string, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error)) error {
+func validateJSONLDFile(path string, loader ld.DocumentLoader, vocabFetch func(string) ([]byte, string, error), base string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("build: read %s: %w", path, err)
@@ -163,10 +167,10 @@ func validateJSONLDFile(path string, loader ld.DocumentLoader, vocabFetch func(s
 	if err != nil {
 		return fmt.Errorf("%s: invalid JSON-LD: %w", path, err)
 	}
-	return validateTerms(path, terms, ctx, vocabFetch)
+	return validateTerms(path, terms, ctx, vocabFetch, base)
 }
 
-func validateTurtleFile(path string, vocabFetch func(string) ([]byte, string, error)) error {
+func validateTurtleFile(path string, vocabFetch func(string) ([]byte, string, error), base string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("build: read %s: %w", path, err)
@@ -179,7 +183,7 @@ func validateTurtleFile(path string, vocabFetch func(string) ([]byte, string, er
 	}
 
 	var terms []usedTerm
-	g := rdflibgo.NewGraph()
+	g := rdflibgo.NewGraph(rdflibgo.WithBase(base))
 	err = turtle.Parse(g, bytes.NewReader(content), turtle.WithProvenance(
 		func(s rdflibgo.Subject, p rdflibgo.URIRef, o rdflibgo.Term, lineNum int) {
 			appendRDFTerm(&terms, s, lineNum)
@@ -191,13 +195,13 @@ func validateTurtleFile(path string, vocabFetch func(string) ([]byte, string, er
 					appendRDFTerm(&terms, datatype, lineNum)
 				}
 			}
-		}))
+		}), turtle.WithBase(base))
 	if err != nil {
 		return fmt.Errorf("%s: invalid Turtle: %w", path, err)
 	}
 
 	ctx := jsonLDContext{prefixes: turtleDeclaredPrefixes(g, content)}
-	return validateTerms(path, terms, ctx, vocabFetch)
+	return validateTerms(path, terms, ctx, vocabFetch, base)
 }
 
 func turtleDeclaredPrefixes(g *rdflibgo.Graph, content []byte) map[string]string {
@@ -225,12 +229,13 @@ func turtleDeclaredPrefixNames(content []byte) map[string]bool {
 	return declared
 }
 
-func validateTerms(path string, terms []usedTerm, ctx jsonLDContext, vocabFetch func(string) ([]byte, string, error)) error {
+func validateTerms(path string, terms []usedTerm, ctx jsonLDContext, vocabFetch func(string) ([]byte, string, error), base string) error {
 	vocabs := vocabularyCache{
 		cacheDir: defaultVocabularyCacheDir(),
 		cache:    map[string]vocabulary{},
 		failures: map[string]error{},
 		fetch:    vocabFetch,
+		base:     base,
 	}
 
 	var errs multiError
@@ -442,16 +447,22 @@ func vocabularyDocumentURL(base string) string {
 	return base
 }
 
-func extractVocabularyTerms(base, contentType string, body []byte) (map[string]bool, error) {
+func extractVocabularyTerms(contentType string, body []byte, base string) (map[string]bool, error) {
 	type parserFn struct {
 		name string
-		fn   func(string, []byte) (map[string]bool, error)
+		fn   func([]byte) (map[string]bool, error)
 	}
 
 	mediaType, _, _ := mime.ParseMediaType(contentType)
-	jsonLDParser := parserFn{name: "json-ld", fn: extractJSONLDVocabularyTerms}
-	turtleParser := parserFn{name: "turtle", fn: extractTurtleVocabularyTerms}
-	rdfXMLParser := parserFn{name: "rdfxml", fn: extractRDFXMLVocabularyTerms}
+	jsonLDParser := parserFn{name: "json-ld", fn: func(body []byte) (map[string]bool, error) {
+		return extractJSONLDVocabularyTerms(body, base)
+	}}
+	turtleParser := parserFn{name: "turtle", fn: func(body []byte) (map[string]bool, error) {
+		return extractTurtleVocabularyTerms(body, base)
+	}}
+	rdfXMLParser := parserFn{name: "rdfxml", fn: func(body []byte) (map[string]bool, error) {
+		return extractRDFXMLVocabularyTerms(body, base)
+	}}
 
 	var parsers []parserFn
 	switch {
@@ -478,18 +489,18 @@ func extractVocabularyTerms(base, contentType string, body []byte) (map[string]b
 
 	var errs []string
 	for _, parser := range parsers {
-		terms, err := parser.fn(base, body)
+		terms, err := parser.fn(body)
 		if err == nil {
 			return terms, nil
 		}
 		errs = append(errs, parser.name+": "+err.Error())
 	}
-	return nil, fmt.Errorf("unsupported vocabulary serialization for %s (%s): %s", base, contentType, strings.Join(errs, "; "))
+	return nil, fmt.Errorf("unsupported vocabulary serialization (%s): %s", contentType, strings.Join(errs, "; "))
 }
 
-func extractJSONLDVocabularyTerms(base string, body []byte) (map[string]bool, error) {
-	g := rdflibgo.NewGraph(rdflibgo.WithBase(vocabularyDocumentURL(base)))
-	if err := jsonld.Parse(g, bytes.NewReader(body), jsonld.WithUnboundedLines()); err != nil {
+func extractJSONLDVocabularyTerms(body []byte, base string) (map[string]bool, error) {
+	g := rdflibgo.NewGraph(rdflibgo.WithBase(base))
+	if err := jsonld.Parse(g, bytes.NewReader(body), jsonld.WithBase(base), jsonld.WithUnboundedLines()); err != nil {
 		return nil, err
 	}
 	terms := map[string]bool{}
@@ -511,9 +522,9 @@ func extractJSONLDVocabularyTerms(base string, body []byte) (map[string]bool, er
 	return terms, nil
 }
 
-func extractTurtleVocabularyTerms(base string, body []byte) (map[string]bool, error) {
-	g := rdflibgo.NewGraph(rdflibgo.WithBase(vocabularyDocumentURL(base)))
-	if err := turtle.Parse(g, bytes.NewReader(body)); err != nil {
+func extractTurtleVocabularyTerms(body []byte, base string) (map[string]bool, error) {
+	g := rdflibgo.NewGraph(rdflibgo.WithBase(base))
+	if err := turtle.Parse(g, bytes.NewReader(body), turtle.WithBase(base)); err != nil {
 		return nil, err
 	}
 

@@ -2,66 +2,36 @@ package build
 
 import (
 	"bytes"
-	"encoding/xml"
-	"io"
-	"net/url"
+
+	rdflibgo "github.com/tggo/goRDFlib"
+	"github.com/tggo/goRDFlib/rdfxml"
 )
 
-func extractRDFXMLVocabularyTerms(base string, body []byte) (map[string]bool, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(body))
-	base = vocabularyDocumentURL(base)
+func extractRDFXMLVocabularyTerms(body []byte, base string) (map[string]bool, error) {
+	g := rdflibgo.NewGraph(rdflibgo.WithBase(base))
+	if err := rdfxml.Parse(g, bytes.NewReader(body), rdfxml.WithBase(base)); err != nil {
+		return nil, err
+	}
+
 	terms := map[string]bool{}
-
-	for {
-		tok, err := decoder.Token()
-		if err == io.EOF {
-			return terms, nil
+	g.Namespaces()(func(_ string, ns rdflibgo.URIRef) bool {
+		if ns.Value() != "" {
+			terms[ns.Value()] = true
 		}
-		if err != nil {
-			return nil, err
+		return true
+	})
+	g.Triples(nil, nil, nil)(func(triple rdflibgo.Triple) bool {
+		if subj, ok := triple.Subject.(rdflibgo.URIRef); ok {
+			terms[subj.Value()] = true
 		}
-
-		start, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
+		terms[triple.Predicate.Value()] = true
+		if obj, ok := triple.Object.(rdflibgo.URIRef); ok {
+			terms[obj.Value()] = true
 		}
-		collectRDFXMLElementTerms(base, start, terms)
-	}
-}
-
-func collectRDFXMLElementTerms(base string, elem xml.StartElement, terms map[string]bool) {
-	if elem.Name.Space != "" && elem.Name.Space != rdfNamespaceIRI {
-		terms[elem.Name.Space+elem.Name.Local] = true
-	}
-
-	for _, attr := range elem.Attr {
-		if attr.Name.Space != rdfNamespaceIRI {
-			continue
+		if lit, ok := triple.Object.(rdflibgo.Literal); ok {
+			terms[lit.Datatype().Value()] = true
 		}
-		switch attr.Name.Local {
-		case "about":
-			if iri := resolveRDFXMLIRI(base, attr.Value); iri != "" {
-				terms[iri] = true
-			}
-		case "ID":
-			if iri := resolveRDFXMLIRI(base, "#"+attr.Value); iri != "" {
-				terms[iri] = true
-			}
-		}
-	}
-}
-
-func resolveRDFXMLIRI(base, value string) string {
-	iri, err := url.Parse(value)
-	if err != nil {
-		return ""
-	}
-	if iri.IsAbs() {
-		return iri.String()
-	}
-	baseIRI, err := url.Parse(base)
-	if err != nil {
-		return value
-	}
-	return baseIRI.ResolveReference(iri).String()
+		return true
+	})
+	return terms, nil
 }

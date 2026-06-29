@@ -16,6 +16,7 @@ import (
 )
 
 const testSchemaOrgBase = "http://schema.org/"
+const testBuildBase = "https://github.com/cgs-earth/sal-cli"
 
 func TestBuildPathsKeepsExplicitPaths(t *testing.T) {
 	called := false
@@ -58,7 +59,7 @@ func TestBuildPathsReturnsSALProjectDirError(t *testing.T) {
 func TestRunReportsUndefinedSchemaOrgTermWithLineNumber(t *testing.T) {
 	path := filepath.Join("testdata", "incorrect", "name.jsonld")
 
-	err := run([]string{path}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+	err := run([]string{path}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch, testBuildBase)
 	require.Error(t, err)
 	got := err.Error()
 	if !strings.Contains(got, path+":4:") {
@@ -81,7 +82,7 @@ func TestRunValidatesSchemaOrgJSONLD(t *testing.T) {
   "url": "http://www.janedoe.com"
 }`)
 
-	err := run([]string{path}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+	err := run([]string{path}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch, testBuildBase)
 	require.NoError(t, err)
 }
 
@@ -130,6 +131,7 @@ func TestRunReportsUndefinedTermFromArbitraryVocabulary(t *testing.T) {
 		[]string{path},
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
+		testBuildBase,
 	)
 
 	require.Error(t, err)
@@ -154,6 +156,7 @@ func TestRunValidatesArbitraryVocabularyTerm(t *testing.T) {
 		[]string{path},
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
+		testBuildBase,
 	)
 
 	require.NoError(t, err)
@@ -172,6 +175,7 @@ ex:Known ex:Known ex:Known ,
 		[]string{path},
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
+		testBuildBase,
 	)
 
 	require.Error(t, err)
@@ -196,6 +200,7 @@ ex:Known ex:Known ex:Known .
 		[]string{path},
 		exampleVocabularyLoader{},
 		exampleVocabularyFetch,
+		testBuildBase,
 	)
 
 	require.NoError(t, err)
@@ -213,6 +218,7 @@ func TestRunValidatesBuiltinXSDDatatype(t *testing.T) {
 		[]string{path},
 		exampleVocabularyLoader{},
 		func(u string) ([]byte, string, error) { return nil, "", fmt.Errorf("unexpected url %s", u) },
+		testBuildBase,
 	)
 
 	require.NoError(t, err)
@@ -243,7 +249,7 @@ func TestRunValidatesJSONLDTestdata(t *testing.T) {
 
 		for _, path := range paths {
 			t.Run(filepath.ToSlash(path), func(t *testing.T) {
-				err := run([]string{path}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+				err := run([]string{path}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch, testBuildBase)
 				if tc.wantErr {
 					require.Error(t, err)
 				} else {
@@ -266,6 +272,7 @@ func TestRunReportsUnknownXSDDatatypeAsUndefinedTerm(t *testing.T) {
 		[]string{path},
 		exampleVocabularyLoader{},
 		func(u string) ([]byte, string, error) { return nil, "", fmt.Errorf("unexpected url %s", u) },
+		testBuildBase,
 	)
 
 	require.Error(t, err)
@@ -298,6 +305,7 @@ ex:Alice ex:name "Alice" .
   </ex:Person>
 </rdf:RDF>`), "application/rdf+xml; qs=0.9", nil
 		},
+		testBuildBase,
 	)
 
 	require.NoError(t, err)
@@ -312,18 +320,18 @@ func TestRunExpandsInputDirectories(t *testing.T) {
 }`)
 	writeTestFile(t, filepath.Join(dir, "skip.ttl"), "@prefix ex: <https://example.com/> .\n")
 
-	err := run([]string{dir}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch)
+	err := run([]string{dir}, schemaOrgTestLoader{}, schemaOrgVocabularyFetch, testBuildBase)
 	require.NoError(t, err)
 }
 
 func TestExtractRDFXMLVocabularyTermsTypedNode(t *testing.T) {
-	terms, err := extractVocabularyTerms("http://example.org/", "application/rdf+xml; qs=0.9", []byte(`<?xml version="1.0"?>
+	terms, err := extractVocabularyTerms("application/rdf+xml; qs=0.9", []byte(`<?xml version="1.0"?>
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
          xmlns:ex="http://example.org/">
   <ex:Person rdf:about="http://example.org/Alice">
     <ex:name>Alice</ex:name>
   </ex:Person>
-</rdf:RDF>`))
+</rdf:RDF>`), testBuildBase)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +348,7 @@ func TestExtractRDFXMLVocabularyTermsTypedNode(t *testing.T) {
 }
 
 func TestExtractJSONLDVocabularyTermsUsesGoRDFlibParser(t *testing.T) {
-	terms, err := extractVocabularyTerms("https://example.com/vocab/", "application/ld+json", []byte(`{
+	terms, err := extractVocabularyTerms("application/ld+json", []byte(`{
   "@context": {
     "ex": "https://example.com/vocab/",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -357,7 +365,7 @@ func TestExtractJSONLDVocabularyTermsUsesGoRDFlibParser(t *testing.T) {
       "rdfs:range": {"@id": "ex:Known"}
     }
   ]
-}`))
+}`), testBuildBase)
 
 	require.NoError(t, err)
 	require.True(t, terms["https://example.com/vocab/Known"])
@@ -365,7 +373,7 @@ func TestExtractJSONLDVocabularyTermsUsesGoRDFlibParser(t *testing.T) {
 }
 
 func TestExtractTurtleVocabularyTermsQUDTSyntax(t *testing.T) {
-	terms, err := extractVocabularyTerms("http://qudt.org/schema/qudt/", "text/turtle; charset=utf-8", []byte(`@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+	terms, err := extractVocabularyTerms("text/turtle; charset=utf-8", []byte(`@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -392,7 +400,7 @@ qudt:Aspect
 
 qudt:hasQuantityKind
   a owl:ObjectProperty .
-`))
+`), testBuildBase)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +410,7 @@ qudt:hasQuantityKind
 }
 
 func TestExtractVocabularyTermsExplicitMimeReportsOnlyThatParser(t *testing.T) {
-	_, err := extractVocabularyTerms("http://example.org/vocab", "text/turtle; charset=utf-8", []byte(`not valid turtle`))
+	_, err := extractVocabularyTerms("text/turtle; charset=utf-8", []byte(`not valid turtle`), testBuildBase)
 	if err == nil {
 		t.Fatal("expected invalid Turtle to fail")
 	}
@@ -452,6 +460,7 @@ dc:conformsTo a dc:Property .
 				return nil, "", fmt.Errorf("unexpected url %s", u)
 			}
 		},
+		base: testBuildBase,
 	}
 
 	for _, base := range []string{
@@ -482,6 +491,7 @@ func TestCachedDocumentLoaderPersistsBetweenCalls(t *testing.T) {
 			return []byte(`@prefix ex: <https://example.com/vocab#> .
 ex:Thing a ex:Thing .`), "text/turtle", nil
 		},
+		base: testBuildBase,
 	}
 
 	first, err := cache.load("https://example.com/vocab")
@@ -511,6 +521,7 @@ func TestVocabularyCachePersistsFailuresBetweenCalls(t *testing.T) {
 			calls.Add(1)
 			return nil, "", fmt.Errorf("cannot dereference %s", u)
 		},
+		base: testBuildBase,
 	}
 
 	for range 2 {
@@ -541,6 +552,7 @@ func TestValidateTermsLogsRepeatedVocabularyFailureOnce(t *testing.T) {
 		func(u string) ([]byte, string, error) {
 			return nil, "", fmt.Errorf("cannot dereference %s", u)
 		},
+		testBuildBase,
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "input.ttl:1: failed to check vocabulary for ex:Missing")
@@ -558,6 +570,7 @@ func TestVocabularyCacheFallsBackToBundledVocabulary(t *testing.T) {
 		fetch: func(u string) ([]byte, string, error) {
 			return nil, "", fmt.Errorf("cannot dereference %s", u)
 		},
+		base: testBuildBase,
 	}
 
 	vocab, err := cache.load("https://schema.org/")
@@ -593,6 +606,7 @@ func TestVocabularyCacheStripsTrailingSlashForOpenGIS(t *testing.T) {
 hyf:HY_HydrometricFeature a hyf:Class .
 `), "text/turtle", nil
 		},
+		base: testBuildBase,
 	}
 
 	if _, err := cache.load("https://www.opengis.net/def/schema/hy_features/hyf/"); err != nil {

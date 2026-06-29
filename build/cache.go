@@ -19,6 +19,7 @@ type vocabularyCache struct {
 	cache    map[string]vocabulary
 	failures map[string]error
 	fetch    func(string) ([]byte, string, error)
+	base     string
 }
 
 const vocabularyCacheVersion = 10
@@ -134,7 +135,7 @@ func (c *vocabularyCache) loadTerms(base string) (map[string]bool, error) {
 	if err != nil {
 		fetchErr = err
 	} else {
-		terms, err := extractVocabularyTerms(base, contentType, body)
+		terms, err := extractVocabularyTerms(contentType, body, c.base)
 		if err == nil {
 			if err := c.storeTermsToDisk(base, terms); err != nil {
 				return nil, err
@@ -144,7 +145,7 @@ func (c *vocabularyCache) loadTerms(base string) (map[string]bool, error) {
 		fetchErr = err
 	}
 
-	terms, err := loadBundledVocabularyTerms(base)
+	terms, err := loadBundledVocabularyTerms(base, c.base)
 	if err != nil {
 		return nil, fetchErr
 	}
@@ -155,7 +156,7 @@ func (c *vocabularyCache) loadTerms(base string) (map[string]bool, error) {
 	return terms, nil
 }
 
-func loadBundledVocabularyTerms(base string) (map[string]bool, error) {
+func loadBundledVocabularyTerms(base, buildBase string) (map[string]bool, error) {
 	body, contentType, ok, err := vocab.Load(base)
 	if err != nil {
 		return nil, err
@@ -163,5 +164,5 @@ func loadBundledVocabularyTerms(base string) (map[string]bool, error) {
 	if !ok {
 		return nil, vocab.MissingError(base)
 	}
-	return extractVocabularyTerms(base, contentType, body)
+	return extractVocabularyTerms(contentType, body, buildBase)
 }
