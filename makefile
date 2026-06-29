@@ -1,4 +1,4 @@
- list_schema:
+list_schema:
 	go tool iceberg --catalog hadoop --warehouse /tmp/iceberg-warehouse schema default.triples
 
 list_files:
