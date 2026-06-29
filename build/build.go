@@ -2,6 +2,7 @@ package build
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/cgs-earth/json-gold/ld"
+	"github.com/cgs-earth/sal/load"
 	"github.com/cgs-earth/sal/pkg"
 	rdflibgo "github.com/tggo/goRDFlib"
 	"github.com/tggo/goRDFlib/nq"
@@ -24,7 +26,7 @@ import (
 type BuildCmd struct {
 	Paths      []string `arg:"positional" help:"RDF files to validate"`
 	PrefixMaps []string `arg:"--prefix-maps" help:"prefix mappings to apply as source target pairs or source=target entries"`
-	Format     string   `arg:"--format" help:"format of input files" default:"nq"`
+	Format     string   `arg:"--format" help:"output format: nq or iceberg" default:"iceberg"`
 }
 
 type jsonLDContext struct {
@@ -63,11 +65,13 @@ func Run(cfg *BuildCmd) (*rdflibgo.Graph, error) {
 	if err != nil {
 		return nil, err
 	}
+	ctx := context.Background()
 	graph, err := run(paths, ld.NewDefaultDocumentLoader(nil), fetch, base)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Format == "nq" {
+	switch cfg.Format {
+	case "nq":
 		dataDir, err := pkg.SalDataDir()
 		if err != nil {
 			return nil, err
@@ -87,6 +91,28 @@ func Run(cfg *BuildCmd) (*rdflibgo.Graph, error) {
 		if err == nil {
 			slog.Info("Saved built RDF data to " + fullOutPath)
 		}
+	case "iceberg":
+		dataDir, err := pkg.SalDataDir()
+		if err != nil {
+			return nil, err
+		}
+		gitProject, err := pkg.GitProjectName()
+		if err != nil {
+			return nil, err
+		}
+		err = load.WriteGraphToIceberg(ctx, graph, &load.LoadCmd{
+			BatchSize:          131072,
+			ParquetCompression: "snappy",
+			MetricsMode:        "none",
+			Warehouse:          dataDir,
+			Namespace:          gitProject,
+		})
+		if err != nil {
+			return nil, err
+		}
+		slog.Info("Saved built RDF data to Iceberg", "warehouse", dataDir, "namespace", gitProject)
+	default:
+		return nil, fmt.Errorf("unknown output format: '%s'. Must be iceberg or nq", cfg.Format)
 	}
 	return graph, err
 }
