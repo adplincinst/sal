@@ -9,6 +9,7 @@ import (
 	"github.com/cgs-earth/sal/build"
 	"github.com/cgs-earth/sal/initialization"
 	"github.com/cgs-earth/sal/load"
+	"github.com/cgs-earth/sal/query"
 
 	"github.com/alexflint/go-arg"
 	"github.com/lmittmann/tint"
@@ -20,6 +21,7 @@ type args struct {
 	Init  *initialization.InitCmd `arg:"subcommand:init" help:"Initialize a SAL project."`
 	Load  *load.LoadCmd           `arg:"subcommand:load" help:"Load N-Quads gzip files into a local Iceberg triples table."`
 	Build *build.BuildCmd         `arg:"subcommand:build" help:"Build a vocabulary."`
+	Query *query.QueryCmd         `arg:"subcommand:query" help:"Use duckdb to query a built SAL data product."`
 }
 
 func (args) Description() string {
@@ -56,6 +58,8 @@ func main() {
 		err = load.Run(cli.Load)
 	case cli.Init != nil:
 		err = initialization.Run(cli.Init)
+	case cli.Query != nil:
+		err = query.Run(cli.Query)
 	}
 	if err != nil {
 		slog.Error(err.Error())
