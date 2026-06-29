@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -31,6 +32,7 @@ func main() {
 		tint.NewHandler(os.Stderr, &tint.Options{
 			Level:      slog.LevelDebug,
 			TimeFormat: time.Kitchen,
+			AddSource:  true,
 		}),
 	))
 
@@ -44,6 +46,12 @@ func main() {
 	switch {
 	case cli.Build != nil:
 		err = build.Run(cli.Build, os.Stdout, os.Stderr)
+		// Errors from build should be directly written to stdout
+		// not written as a log which adds extra noise
+		if err != nil {
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
 	case cli.Load != nil:
 		err = load.Run(cli.Load)
 	case cli.Init != nil:
