@@ -87,14 +87,7 @@ SELECT * FROM triples LIMIT 20;
 func joinRemote(base string, parts ...string) string {
 	joined := path.Join(parts...)
 	if joined == "." {
-		return trimTrailingSlash(base)
+		return strings.TrimSuffix(base, "/")
 	}
-	return trimTrailingSlash(base) + "/" + joined
-}
-
-func trimTrailingSlash(s string) string {
-	for len(s) > 0 && s[len(s)-1] == '/' {
-		s = s[:len(s)-1]
-	}
-	return s
+	return strings.TrimSuffix(base, "/") + "/" + joined
 }
