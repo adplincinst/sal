@@ -74,6 +74,8 @@ func main() {
 		err = salmodule.Run(cli.SalModule)
 	case cli.Push != nil:
 		err = push.Run(cli.Push)
+	case cli.Pull != nil:
+		err = pull.Run(cli.Pull)
 	}
 	if err != nil {
 		slog.Error(err.Error())
