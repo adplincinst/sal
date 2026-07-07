@@ -25,6 +25,7 @@ type args struct {
 	Init      *initialization.InitCmd `arg:"subcommand:init" help:"Initialize a SAL project."`
 	Load      *load.LoadCmd           `arg:"subcommand:load" help:"Load N-Quads gzip files into a local Iceberg triples table."`
 	Build     *build.BuildCmd         `arg:"subcommand:build" help:"Build a vocabulary."`
+	Validate  *build.ValidateCmd      `arg:"subcommand:validate" help:"Validate a vocabulary."`
 	Query     *query.QueryCmd         `arg:"subcommand:query" help:"Use duckdb to query a built SAL data product."`
 	Clean     *clean.CleanCmd         `arg:"subcommand:clean" help:"Clean build artifacts produced by a SAL project."`
 	Push      *push.PushCmd           `arg:"subcommand:push" help:"Push a built SAL data product to an OCI registry."`
@@ -76,6 +77,12 @@ func main() {
 		err = push.Run(cli.Push)
 	case cli.Pull != nil:
 		err = pull.Run(cli.Pull)
+	case cli.Validate != nil:
+		_, err = cli.Validate.Run()
+		if err != nil {
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
 	}
 	if err != nil {
 		slog.Error(err.Error())

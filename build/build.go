@@ -11,10 +11,28 @@ import (
 	rdflibgo "github.com/tggo/goRDFlib"
 )
 
+type ValidateCmd struct {
+	Paths      []string          `arg:"positional" help:"RDF files to validate"`
+	PrefixMaps []string          `arg:"--prefix-maps" help:"prefix mappings to apply as source target pairs or source=target entries"`
+	Format     GraphExportFormat `arg:"--format" help:"output format: nq or iceberg" default:"iceberg"`
+}
+
+func (cfg *ValidateCmd) Run() (*rdflibgo.Graph, error) {
+	buildCfg := &BuildCmd{
+		Paths:      cfg.Paths,
+		PrefixMaps: cfg.PrefixMaps,
+		Format:     cfg.Format,
+		skipCommit: true,
+	}
+	return Run(buildCfg)
+}
+
 type BuildCmd struct {
 	Paths      []string          `arg:"positional" help:"RDF files to validate"`
 	PrefixMaps []string          `arg:"--prefix-maps" help:"prefix mappings to apply as source target pairs or source=target entries"`
 	Format     GraphExportFormat `arg:"--format" help:"output format: nq or iceberg" default:"iceberg"`
+
+	skipCommit bool
 }
 
 var findSALProjectDir = pkg.SALProjectDir
@@ -87,6 +105,10 @@ func Run(cfg *BuildCmd) (*rdflibgo.Graph, error) {
 	}
 	if cfg.Format == GraphExportFormatNQuads {
 		slog.Warn("Exporting as NQuads. Note this will create a larger and less efficient file than iceberg")
+	}
+
+	if cfg.skipCommit {
+		return finalGraph, nil
 	}
 	if err := ExportGraph(finalGraph, cfg.Format, hash); err != nil {
 		return nil, err
