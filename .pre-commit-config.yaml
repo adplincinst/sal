@@ -4,7 +4,7 @@
 minimum_pre_commit_version: "2.9.0"
 ci:
   autoupdate_schedule: monthly
-  skip: [golang lint, gofmt, gotest]
+  skip: [golang lint, gofmt, gotest, deadcode]
 repos:
   - repo: meta
     hooks:
@@ -51,3 +51,9 @@ repos:
         language: system
         types: [go]
         pass_filenames: false # test handles files itself
+      - id: deadcode
+        name: Check for dead code
+        entry: deadcode -test ./...
+        language: system
+        types: [go]
+        pass_filenames: false

@@ -14,6 +14,14 @@ import (
 	"oras.land/oras-go/v2/content/memory"
 )
 
+func pull(ctx context.Context, src oras.ReadOnlyTarget, reference string, destination string) error {
+	desc, manifest, err := fetchManifest(ctx, src, reference)
+	if err != nil {
+		return err
+	}
+	return pullManifestLayers(ctx, src, manifest, desc, reference, destination)
+}
+
 func TestPullRestoresArtifactFilesToDestination(t *testing.T) {
 	ctx := context.Background()
 	store := memory.New()

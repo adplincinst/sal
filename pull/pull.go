@@ -169,14 +169,6 @@ func pullManifestLayers(ctx context.Context, src oras.ReadOnlyTarget, manifest o
 	return nil
 }
 
-func pull(ctx context.Context, src oras.ReadOnlyTarget, reference string, destination string) error {
-	desc, manifest, err := fetchManifest(ctx, src, reference)
-	if err != nil {
-		return err
-	}
-	return pullManifestLayers(ctx, src, manifest, desc, reference, destination)
-}
-
 type artifactReference struct {
 	repository   string
 	reference    string
