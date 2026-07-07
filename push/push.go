@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/cgs-earth/sal/pkg"
 	"oras.land/oras-go/v2"
@@ -18,6 +20,7 @@ import (
 )
 
 const defaultRegistry = "ghcr.io"
+const maxConcurrentUploads = 4
 
 type PushCmd struct {
 	Repository string `arg:"positional" help:"Full URL of the OCI registry and repository to push the built SAL data product to. Example: ghcr.io/my-username/my-repository"`
@@ -25,10 +28,26 @@ type PushCmd struct {
 	Password   string `arg:"--password,env:OCI_PASSWORD" help:"Password or access token for the OCI registry."`
 }
 
+// formatUploadedSize returns a human-readable transfer size using MB for
+// larger uploads and KB for smaller uploads.
+func formatUploadedSize(bytes int64) string {
+	if bytes >= 1024*1024 {
+		return fmt.Sprintf("%.2f MB", float64(bytes)/(1024*1024))
+	}
+	return fmt.Sprintf("%.2f KB", float64(bytes)/1024)
+}
+
+// push uploads all files in dataDir as OCI layers, then packs and tags a
+// manifest that references those uploaded layers.
 func push(ctx context.Context, dataDir string, repo *remote.Repository, destination string) error {
-	var layers []ocispec.Descriptor
 	slog.Info("Pushing SAL data product in " + dataDir + " to " + destination)
 
+	type uploadFile struct {
+		path  string
+		title string
+	}
+
+	var files []uploadFile
 	err := filepath.WalkDir(dataDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -37,34 +56,55 @@ func push(ctx context.Context, dataDir string, repo *remote.Repository, destinat
 			return nil
 		}
 
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-
 		rel, err := filepath.Rel(dataDir, path)
 		if err != nil {
 			return fmt.Errorf("relative path for %s: %w", path, err)
 		}
 
-		desc, err := oras.PushBytes(ctx, repo, ocispec.MediaTypeImageLayer, b)
-		if err != nil {
-			return fmt.Errorf("push layer %s: %w", rel, err)
-		}
-
-		desc.Annotations = map[string]string{
-			"org.opencontainers.image.title": filepath.ToSlash(rel),
-		}
-
-		layers = append(layers, desc)
+		files = append(files, uploadFile{path: path, title: filepath.ToSlash(rel)})
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	if len(layers) == 0 {
+	if len(files) == 0 {
 		return fmt.Errorf("no files found in SAL data directory: %s", dataDir)
+	}
+
+	layers := make([]ocispec.Descriptor, len(files))
+	var uploadedFiles atomic.Int64
+	var uploadedBytes atomic.Int64
+	group, uploadCtx := errgroup.WithContext(ctx)
+	group.SetLimit(maxConcurrentUploads)
+	for i, file := range files {
+		group.Go(func() error {
+			b, err := os.ReadFile(file.path)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", file.path, err)
+			}
+
+			desc, err := oras.PushBytes(uploadCtx, repo, ocispec.MediaTypeImageLayer, b)
+			if err != nil {
+				return fmt.Errorf("push layer %s: %w", file.title, err)
+			}
+
+			desc.Annotations = map[string]string{
+				"org.opencontainers.image.title": file.title,
+			}
+
+			layers[i] = desc
+			completed := uploadedFiles.Add(1)
+			uploadedBytes.Add(int64(len(b)))
+			if completed%5 == 0 {
+				msg := fmt.Sprintf("Uploaded %d/%d files (%s)", completed, len(files), formatUploadedSize(uploadedBytes.Load()))
+				slog.Info(msg)
+			}
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return err
 	}
 
 	gitRemote, err := pkg.DefaultGitRemote()
@@ -101,7 +141,7 @@ func push(ctx context.Context, dataDir string, repo *remote.Repository, destinat
 		return fmt.Errorf("push artifact: %w", err)
 	}
 
-	slog.Info("Pushed data product to " + destination + ":latest")
+	slog.Info("Pushed data product to " + destination + ":latest totaling " + formatUploadedSize(uploadedBytes.Load()))
 	return nil
 }
 
