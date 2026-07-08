@@ -28,11 +28,11 @@ const maxConcurrentDeployUploads = 4
 // Authentication is handled by tools like gsutil or aws s3
 // which manage credentials.
 // After upload, files then can be queried via a service like duckdb
-// using a query like the following
+// using a query like the following format
 // SELECT subject, predicate, object
 // FROM iceberg_scan(
 //
-//	'gs://sal-test-bucket/sal/triples'
+//	'gs://bucket/git-project/iceberg-table'
 //
 // )LIMIT 5;
 type DeployCmd struct {
