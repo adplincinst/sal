@@ -116,18 +116,15 @@ func push(ctx context.Context, dataDir string, repo *remote.Repository, destinat
 	if err != nil {
 		slog.Warn("failed to get git commit hash for artifact annotation: " + err.Error())
 	}
+
+	description := fmt.Sprintf("SAL-produced iceberg data product for %s at commit %s", gitRemote, gitHash)
+
 	desc, err := oras.PackManifest(ctx, repo, oras.PackManifestVersion1_1, "application/octet-stream", oras.PackManifestOptions{
 		Layers: layers,
 		ManifestAnnotations: map[string]string{
-			"org.opencontainers.image.source": gitRemote,
-			"sal.git-commit-hash":             gitHash,
-		},
-		// TODO add more metadata and digest info about the sal config itself
-		ConfigDescriptor: &ocispec.Descriptor{
-			MediaType: "application/vnd.cgs-earth.sal.config.v1+json",
-			Annotations: map[string]string{
-				"sal.git-commit-hash": gitHash,
-			},
+			"org.opencontainers.image.source":      gitRemote,
+			"sal.git-commit-hash":                  gitHash,
+			"org.opencontainers.image.description": description,
 		},
 	})
 	if err != nil {
