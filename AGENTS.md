@@ -19,6 +19,43 @@ SAL, (semantic accessibility layer), is a CLI tool for creating RDF data and met
     - Within the newly cloned repo directory, it should run `sal init` to initialize a sal project.
     - Within the new cloned repo directory, it should pull the OCI artifact and place it in the `.sal/data` directory.
 
+### `edit`
+
+- Rewrites Iceberg table metadata so a built table can be read from a new table root.
+- `edit.RewriteIcebergTableRoot` must update every Iceberg metadata file that can contain paths: `*.metadata.json`, manifest list Avro files, and manifest Avro files.
+    - JSON metadata contains fields such as `location`, `manifest-list`, and `metadata-file`.
+    - Avro metadata contains fields such as `manifest_path` and data file `file_path`.
+- The edit command must not rewrite Parquet data files. It only changes metadata references.
+- Path rewriting is prefix based: the old table root is replaced by the new table root, and child paths under the old root are preserved.
+- `edit.RewriteIcebergMetadataPath` exists for deploy-time metadata renames. Use it when a single metadata object name changes and every reference to that exact metadata path must be updated.
+
+### `deploy`
+
+- Deploy copies `.sal/data` to a temporary staging directory, rewrites the staged Iceberg metadata, and uploads the staged files. The local `.sal/data` directory must remain unchanged.
+- Deploy uses the edit package for Iceberg metadata rewrites. Do not duplicate JSON or Avro metadata traversal logic in deploy unless the edit package cannot represent the operation.
+- Bucket URL semantics are important:
+    - A bare object-store bucket like `gs://my-bucket/` deploys the full `.sal/data` layout. If the local table is `.sal/data/sal/triples`, the deployed table root is `gs://my-bucket/sal/triples`.
+    - An explicit object-store path or prefix like `gs://my-bucket/sal/triples` or `gs://my-bucket?prefix=sal/triples/` is treated as the table root when there is exactly one Iceberg table.
+    - Multiple Iceberg tables always preserve their relative table paths under the bucket root or prefix.
+- Upload ordering matters for readers: data files first, metadata files second, and `metadata/version-hint.text` last.
+- Object-store deploys (`gs`, `s3`, `azblob`) must use fresh metadata object names during deploy. Reusing the same Avro manifest object names can leave DuckDB or HTTP/object-store caches reading stale manifests after a redeploy.
+    - Fresh deploy metadata includes renamed Avro metadata files, updated references to those renamed files, a new `v<number>.metadata.json`, and a `version-hint.text` pointing to that version.
+    - `version-hint.text` must not include a trailing newline; DuckDB treats the newline as part of the version string.
+- Do not percent-escape Iceberg `file_path` values during metadata rewrite. The local partition directory names may contain literal percent-encoded values like `predicate_partition=http%3A%2F%2Fschema.org%2Fte`; DuckDB and the object-store client handle URL encoding when fetching the object.
+- The key deploy verification query is:
+
+```sql
+SET enable_object_cache = false;
+SELECT
+    subject,
+    predicate,
+    object
+FROM iceberg_scan(
+    'gs://sal-test-bucket/sal/triples'
+)
+LIMIT 5;
+```
+
 ## Code Style
 
 - Use testify for writing succinct tests; avoid just the standard library and if statements with `t.Error()`.

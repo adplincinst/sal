@@ -98,8 +98,36 @@ func RewriteIcebergTableRoot(tablePath string, newRoot string) (int, error) {
 		return 0, nil
 	}
 
+	changedFiles, err := rewriteIcebergMetadataFiles(metadataDir, rewrite)
+	if err != nil {
+		return 0, fmt.Errorf("rewrite Iceberg metadata in %s: %w", metadataDir, err)
+	}
+
+	return changedFiles, nil
+}
+
+// RewriteIcebergMetadataPath updates references to one metadata file path inside Iceberg metadata files.
+func RewriteIcebergMetadataPath(tablePath string, oldPath string, newPath string) (int, error) {
+	metadataDir := filepath.Join(tablePath, "metadata")
+	rewrite := rootRewriter{
+		oldRoot: normalizeRoot(oldPath),
+		newRoot: normalizeRoot(newPath),
+	}
+	if rewrite.oldRoot == rewrite.newRoot {
+		return 0, nil
+	}
+
+	changedFiles, err := rewriteIcebergMetadataFiles(metadataDir, rewrite)
+	if err != nil {
+		return 0, fmt.Errorf("rewrite Iceberg metadata in %s: %w", metadataDir, err)
+	}
+
+	return changedFiles, nil
+}
+
+func rewriteIcebergMetadataFiles(metadataDir string, rewrite rootRewriter) (int, error) {
 	var changedFiles int
-	err = filepath.WalkDir(metadataDir, func(path string, entry os.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(metadataDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -128,7 +156,7 @@ func RewriteIcebergTableRoot(tablePath string, newRoot string) (int, error) {
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("rewrite Iceberg metadata in %s: %w", metadataDir, err)
+		return 0, err
 	}
 
 	return changedFiles, nil

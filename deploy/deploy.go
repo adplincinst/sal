@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/cgs-earth/sal/edit"
 	"github.com/cgs-earth/sal/pkg"
@@ -77,7 +78,7 @@ func deploy(ctx context.Context, dataDir string, bucketURL string, openBucket bu
 	}
 	defer cleanup()
 
-	uploadRoot, err := deployUploadRoot(stagedDataDir)
+	uploadRoot, err := deployUploadRoot(stagedDataDir, bucketURL)
 	if err != nil {
 		return err
 	}
@@ -167,12 +168,12 @@ func stagedDataDirForDeploy(dataDir string, bucketURL string) (string, func(), e
 }
 
 // deployUploadRoot returns the directory whose contents should be uploaded to the provided bucket URL.
-func deployUploadRoot(stagedDataDir string) (string, error) {
+func deployUploadRoot(stagedDataDir string, bucketURL string) (string, error) {
 	tables, err := icebergTablePaths(stagedDataDir)
 	if err != nil {
 		return "", err
 	}
-	if len(tables) == 1 {
+	if len(tables) == 1 && deployDestinationIsExplicitTableRoot(bucketURL) {
 		return tables[0], nil
 	}
 	return stagedDataDir, nil
@@ -257,12 +258,19 @@ func rewriteStagedIcebergRoots(stagedDataDir string, bucketURL string) error {
 			return fmt.Errorf("relative table path for %s: %w", tablePath, err)
 		}
 		newRoot := baseRoot
-		if len(tables) > 1 {
+		if len(tables) > 1 || !deployDestinationIsExplicitTableRoot(bucketURL) {
 			newRoot = joinRemote(baseRoot, filepath.ToSlash(rel))
 		}
 		changes, err := edit.RewriteIcebergTableRoot(tablePath, newRoot)
 		if err != nil {
 			return err
+		}
+		if deployDestinationNeedsVersionedMetadata(bucketURL) {
+			versionChanges, err := versionStagedIcebergMetadata(tablePath, newRoot)
+			if err != nil {
+				return err
+			}
+			changes += versionChanges
 		}
 		slog.Info("Prepared Iceberg table metadata for deploy",
 			"table", rel,
@@ -329,6 +337,117 @@ func objectBaseURL(bucketURL string) string {
 		return base
 	}
 	return base + "/" + prefix
+}
+
+func deployDestinationIsExplicitTableRoot(bucketURL string) bool {
+	u, err := url.Parse(bucketURL)
+	if err != nil || u.Scheme == "" {
+		return true
+	}
+	if u.Scheme != "gs" && u.Scheme != "s3" && u.Scheme != "azblob" {
+		return true
+	}
+
+	if strings.Trim(u.Path, "/") != "" {
+		return true
+	}
+	return strings.Trim(u.Query().Get("prefix"), "/") != ""
+}
+
+func deployDestinationNeedsVersionedMetadata(bucketURL string) bool {
+	u, err := url.Parse(bucketURL)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "gs", "s3", "azblob":
+		return true
+	default:
+		return false
+	}
+}
+
+// versionStagedIcebergMetadata gives rewritten metadata unique object names so object-store caches
+// cannot serve stale manifests from a previous deployment at the same table location.
+func versionStagedIcebergMetadata(tablePath string, tableRoot string) (int, error) {
+	metadataDir := filepath.Join(tablePath, "metadata")
+	deployID := fmt.Sprintf("deploy-%d", time.Now().UnixNano())
+	var changedFiles int
+
+	avroFiles, err := filepath.Glob(filepath.Join(metadataDir, "*.avro"))
+	if err != nil {
+		return 0, err
+	}
+	for _, oldLocalPath := range avroFiles {
+		oldName := filepath.Base(oldLocalPath)
+		newName := deployID + "-" + oldName
+		newLocalPath := filepath.Join(metadataDir, newName)
+
+		oldRemotePath := joinRemote(tableRoot, "metadata", oldName)
+		newRemotePath := joinRemote(tableRoot, "metadata", newName)
+		if err := os.Rename(oldLocalPath, newLocalPath); err != nil {
+			return 0, fmt.Errorf("rename Iceberg metadata file %s: %w", oldLocalPath, err)
+		}
+		changes, err := edit.RewriteIcebergMetadataPath(tablePath, oldRemotePath, newRemotePath)
+		if err != nil {
+			return 0, err
+		}
+		changedFiles += changes
+	}
+
+	latestMetadata, latestVersion, err := latestMetadataJSON(metadataDir)
+	if err != nil {
+		return 0, err
+	}
+	newVersion := int(time.Now().UnixNano())
+	if newVersion <= latestVersion {
+		newVersion = latestVersion + 1
+	}
+	newMetadataPath := filepath.Join(metadataDir, fmt.Sprintf("v%d.metadata.json", newVersion))
+	info, err := os.Stat(latestMetadata)
+	if err != nil {
+		return 0, err
+	}
+	if err := copyFile(latestMetadata, newMetadataPath, info.Mode()); err != nil {
+		return 0, err
+	}
+	if err := os.WriteFile(filepath.Join(metadataDir, "version-hint.text"), []byte(fmt.Sprintf("%d", newVersion)), 0644); err != nil {
+		return 0, fmt.Errorf("write Iceberg version hint: %w", err)
+	}
+
+	return changedFiles + 2, nil
+}
+
+func latestMetadataJSON(metadataDir string) (string, int, error) {
+	metadataFiles, err := filepath.Glob(filepath.Join(metadataDir, "*.metadata.json"))
+	if err != nil {
+		return "", 0, err
+	}
+	if len(metadataFiles) == 0 {
+		return "", 0, fmt.Errorf("no Iceberg metadata JSON files found in %s", metadataDir)
+	}
+
+	latest := metadataFiles[0]
+	latestVersion := metadataJSONVersion(latest)
+	for _, path := range metadataFiles[1:] {
+		version := metadataJSONVersion(path)
+		if version > latestVersion {
+			latest = path
+			latestVersion = version
+		}
+	}
+	return latest, latestVersion, nil
+}
+
+func metadataJSONVersion(path string) int {
+	name := filepath.Base(path)
+	if !strings.HasPrefix(name, "v") {
+		return -1
+	}
+	name = strings.TrimSuffix(strings.TrimPrefix(name, "v"), ".metadata.json")
+	var version int
+	_, _ = fmt.Sscanf(name, "%d", &version)
+	return version
 }
 
 func joinRemote(base string, parts ...string) string {

@@ -123,13 +123,40 @@ func TestRewriteStagedIcebergRootsUsesExactBucketURLForSingleTable(t *testing.T)
 	require.Contains(t, string(metadata), `"location": "gs://sal-test-bucket/sal/triples"`)
 }
 
-func TestDeployUploadRootUsesSingleIcebergTableDirectory(t *testing.T) {
+func TestRewriteStagedIcebergRootsPreservesTablePathForBareBucket(t *testing.T) {
+	dataDir := t.TempDir()
+	tablePath := filepath.Join(dataDir, "sal", "triples")
+	require.NoError(t, os.MkdirAll(filepath.Join(tablePath, "metadata"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"), []byte(`{
+		"location": "`+filepath.ToSlash(tablePath)+`",
+		"snapshots": []
+	}`), 0644))
+
+	require.NoError(t, rewriteStagedIcebergRoots(dataDir, "gs://sal-test-bucket/"))
+
+	metadata, err := os.ReadFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(metadata), `"location": "gs://sal-test-bucket/sal/triples"`)
+}
+
+func TestDeployUploadRootUsesSingleIcebergTableDirectoryForExplicitTableRoot(t *testing.T) {
 	dataDir := t.TempDir()
 	tablePath := filepath.Join(dataDir, "sal", "triples")
 	require.NoError(t, os.MkdirAll(filepath.Join(tablePath, "metadata"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"), []byte("{}"), 0644))
 
-	uploadRoot, err := deployUploadRoot(dataDir)
+	uploadRoot, err := deployUploadRoot(dataDir, "gs://my-bucket/sal/triples")
 	require.NoError(t, err)
 	require.Equal(t, tablePath, uploadRoot)
+}
+
+func TestDeployUploadRootPreservesLayoutForBareBucket(t *testing.T) {
+	dataDir := t.TempDir()
+	tablePath := filepath.Join(dataDir, "sal", "triples")
+	require.NoError(t, os.MkdirAll(filepath.Join(tablePath, "metadata"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"), []byte("{}"), 0644))
+
+	uploadRoot, err := deployUploadRoot(dataDir, "gs://my-bucket/")
+	require.NoError(t, err)
+	require.Equal(t, dataDir, uploadRoot)
 }
