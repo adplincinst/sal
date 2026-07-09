@@ -3,8 +3,9 @@ package salmodule
 import "fmt"
 
 type SalModuleCmd struct {
-	Ontology *ontologyCmd `arg:"subcommand:ontology" help:"Print a sal module's ontology"`
-	Run      *runCmd      `arg:"subcommand:run" help:"Run a sal module"`
+	// Ontology is needed so that the sal cli itself is a sal module
+	Ontology *ontologyCmd `arg:"subcommand:ontology" help:"Print the ontology of the sal cli itself"`
+	Run      *runCmd      `arg:"subcommand:run" help:"Run a sal project"`
 }
 
 func Run(cmd *SalModuleCmd) error {
