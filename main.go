@@ -9,11 +9,11 @@ import (
 
 	"github.com/cgs-earth/sal/build"
 	"github.com/cgs-earth/sal/clean"
+	"github.com/cgs-earth/sal/clone"
 	"github.com/cgs-earth/sal/deploy"
 	"github.com/cgs-earth/sal/edit"
 	"github.com/cgs-earth/sal/initialization"
 	"github.com/cgs-earth/sal/load"
-	"github.com/cgs-earth/sal/pull"
 	"github.com/cgs-earth/sal/push"
 	"github.com/cgs-earth/sal/query"
 	"github.com/cgs-earth/sal/salmodule"
@@ -33,7 +33,7 @@ type args struct {
 	Clean     *clean.CleanCmd         `arg:"subcommand:clean" help:"Clean build artifacts produced by a SAL project."`
 	Push      *push.PushCmd           `arg:"subcommand:push" help:"Push a built SAL data product to an OCI registry."`
 	SalModule *salmodule.SalModuleCmd `arg:"subcommand:salmodule" help:"Output salmodule information about this project."`
-	Pull      *pull.PullCmd           `arg:"subcommand:pull" help:"Pull an OCI artifact of a built SAL data product."`
+	Clone     *clone.CloneCmd         `arg:"subcommand:pull" help:"Clone an OCI artifact and the associated git repository for a built SAL data product."`
 	Edit      *edit.EditCmd           `arg:"subcommand:edit" help:"Edit a built SAL data product."`
 	Deploy    *deploy.DeployCmd       `arg:"subcommand:deploy" help:"Deploy a built SAL data product."`
 }
@@ -82,8 +82,8 @@ func main() {
 		err = salmodule.Run(cli.SalModule)
 	case cli.Push != nil:
 		err = push.Run(cli.Push)
-	case cli.Pull != nil:
-		err = pull.Run(cli.Pull)
+	case cli.Clone != nil:
+		err = clone.Run(cli.Clone)
 	case cli.Edit != nil:
 		err = cli.Edit.Run()
 	case cli.Deploy != nil:

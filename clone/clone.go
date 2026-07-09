@@ -1,4 +1,4 @@
-package pull
+package clone
 
 import (
 	"context"
@@ -26,7 +26,7 @@ const (
 	gitCommitAnnotation = "sal.git-commit-hash"
 )
 
-type PullCmd struct {
+type CloneCmd struct {
 	Artifact    string `arg:"positional" help:"Full URL of the OCI artifact to pull. Example: ghcr.io/my-username/my-repository:latest"`
 	Username    string `arg:"--username,env:OCI_USERNAME" help:"Username for the OCI registry"`
 	Password    string `arg:"--password,env:OCI_PASSWORD" help:"Password for the OCI registry"`
@@ -197,7 +197,7 @@ func parseArtifact(artifact string) (artifactReference, error) {
 	}, nil
 }
 
-func credentialFromConfig(cfg *PullCmd, ref artifactReference) auth.Credential {
+func credentialFromConfig(cfg *CloneCmd, ref artifactReference) auth.Credential {
 	username := cfg.Username
 	if username == "" && cfg.Password != "" {
 		username = ref.owner
@@ -209,7 +209,7 @@ func credentialFromConfig(cfg *PullCmd, ref artifactReference) auth.Credential {
 	}
 }
 
-func Run(cfg *PullCmd) error {
+func Run(cfg *CloneCmd) error {
 	ctx := context.Background()
 	ref, err := parseArtifact(cfg.Artifact)
 	if err != nil {

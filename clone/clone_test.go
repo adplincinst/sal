@@ -1,4 +1,4 @@
-package pull
+package clone
 
 import (
 	"context"
@@ -107,7 +107,7 @@ func TestCredentialFromConfigInfersUsernameFromArtifactOwner(t *testing.T) {
 	ref, err := parseArtifact("ghcr.io/cgs-earth/sal:latest")
 	require.NoError(t, err)
 
-	credential := credentialFromConfig(&PullCmd{Password: "token"}, ref)
+	credential := credentialFromConfig(&CloneCmd{Password: "token"}, ref)
 
 	require.Equal(t, "cgs-earth", credential.Username)
 	require.Equal(t, "token", credential.Password)
@@ -117,7 +117,7 @@ func TestCredentialFromConfigUsesExplicitUsername(t *testing.T) {
 	ref, err := parseArtifact("ghcr.io/cgs-earth/sal:latest")
 	require.NoError(t, err)
 
-	credential := credentialFromConfig(&PullCmd{Username: "octocat", Password: "token"}, ref)
+	credential := credentialFromConfig(&CloneCmd{Username: "octocat", Password: "token"}, ref)
 
 	require.Equal(t, "octocat", credential.Username)
 	require.Equal(t, "token", credential.Password)
