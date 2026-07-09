@@ -28,6 +28,31 @@ func TestRewriteStringReplacesRootAndChildren(t *testing.T) {
 	require.Equal(t, "s3://my_test_bucket", rewritten)
 }
 
+func TestRewriteStringEscapesPercentSignsForHTTPRoots(t *testing.T) {
+	rewrite := rootRewriter{
+		oldRoot:       "/tmp/warehouse/project/triples",
+		newRoot:       "https://storage.googleapis.com/my_test_bucket/sal/triples",
+		escapeURIPath: true,
+	}
+
+	rewritten, changed := rewrite.rewriteString("/tmp/warehouse/project/triples/data/predicate_partition=http%3A%2F%2Fschema.org%2Fte/file.parquet")
+
+	require.True(t, changed)
+	require.Equal(t, "https://storage.googleapis.com/my_test_bucket/sal/triples/data/predicate_partition=http%253A%252F%252Fschema.org%252Fte/file.parquet", rewritten)
+}
+
+func TestRewriteStringDoesNotEscapePercentSignsForGCSRoots(t *testing.T) {
+	rewrite := rootRewriter{
+		oldRoot: "/tmp/warehouse/project/triples",
+		newRoot: "gs://my_test_bucket/sal/triples",
+	}
+
+	rewritten, changed := rewrite.rewriteString("/tmp/warehouse/project/triples/data/predicate_partition=http%3A%2F%2Fschema.org%2Fte/file.parquet")
+
+	require.True(t, changed)
+	require.Equal(t, "gs://my_test_bucket/sal/triples/data/predicate_partition=http%3A%2F%2Fschema.org%2Fte/file.parquet", rewritten)
+}
+
 func TestRewriteStringDoesNotRewritePartialPrefix(t *testing.T) {
 	rewrite := rootRewriter{
 		oldRoot: "/tmp/warehouse/project/triples",

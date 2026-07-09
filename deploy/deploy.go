@@ -124,6 +124,10 @@ func bucketOpenURL(bucketURL string) (string, error) {
 	switch u.Scheme {
 	case "gs", "s3", "azblob":
 		withPathPrefix(u)
+	case "https":
+		if isStorageGoogleapisURL(u) {
+			return storageGoogleapisOpenURL(u)
+		}
 	}
 
 	return u.String(), nil
@@ -315,6 +319,9 @@ func objectBaseURL(bucketURL string) string {
 	if err != nil || u.Scheme == "" {
 		return strings.TrimSuffix(bucketURL, "/")
 	}
+	if isStorageGoogleapisURL(u) {
+		return storageGoogleapisObjectBaseURL(u)
+	}
 	if u.Scheme != "gs" && u.Scheme != "s3" && u.Scheme != "azblob" {
 		return strings.TrimSuffix(bucketURL, "/")
 	}
@@ -344,6 +351,10 @@ func deployDestinationIsExplicitTableRoot(bucketURL string) bool {
 	if err != nil || u.Scheme == "" {
 		return true
 	}
+	if isStorageGoogleapisURL(u) {
+		_, prefix, ok := storageGoogleapisParts(u)
+		return ok && prefix != ""
+	}
 	if u.Scheme != "gs" && u.Scheme != "s3" && u.Scheme != "azblob" {
 		return true
 	}
@@ -359,12 +370,71 @@ func deployDestinationNeedsVersionedMetadata(bucketURL string) bool {
 	if err != nil {
 		return false
 	}
+	if isStorageGoogleapisURL(u) {
+		return true
+	}
 	switch u.Scheme {
 	case "gs", "s3", "azblob":
 		return true
 	default:
 		return false
 	}
+}
+
+func isStorageGoogleapisURL(u *url.URL) bool {
+	return u.Scheme == "https" && strings.EqualFold(u.Host, "storage.googleapis.com")
+}
+
+func storageGoogleapisOpenURL(u *url.URL) (string, error) {
+	bucket, prefix, ok := storageGoogleapisParts(u)
+	if !ok {
+		return "", fmt.Errorf("storage.googleapis.com bucket URL must include a bucket name")
+	}
+
+	gcsURL := url.URL{
+		Scheme: "gs",
+		Host:   bucket,
+	}
+	if prefix != "" {
+		query := gcsURL.Query()
+		query.Set("prefix", prefix+"/")
+		gcsURL.RawQuery = query.Encode()
+	}
+	return gcsURL.String(), nil
+}
+
+func storageGoogleapisObjectBaseURL(u *url.URL) string {
+	bucket, prefix, ok := storageGoogleapisParts(u)
+	if !ok {
+		return strings.TrimSuffix(u.String(), "/")
+	}
+	base := "https://storage.googleapis.com/" + bucket
+	if prefix == "" {
+		return base
+	}
+	return base + "/" + prefix
+}
+
+func storageGoogleapisParts(u *url.URL) (string, string, bool) {
+	path := strings.Trim(u.EscapedPath(), "/")
+	if path == "" {
+		return "", "", false
+	}
+
+	parts := strings.SplitN(path, "/", 2)
+	bucket := parts[0]
+	prefix := ""
+	if len(parts) == 2 {
+		prefix = strings.Trim(parts[1], "/")
+	}
+	if queryPrefix := strings.Trim(u.Query().Get("prefix"), "/"); queryPrefix != "" {
+		if prefix == "" {
+			prefix = queryPrefix
+		} else {
+			prefix += "/" + queryPrefix
+		}
+	}
+	return bucket, prefix, true
 }
 
 // versionStagedIcebergMetadata gives rewritten metadata unique object names so object-store caches

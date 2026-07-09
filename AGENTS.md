@@ -36,12 +36,15 @@ SAL, (semantic accessibility layer), is a CLI tool for creating RDF data and met
 - Bucket URL semantics are important:
     - A bare object-store bucket like `gs://my-bucket/` deploys the full `.sal/data` layout. If the local table is `.sal/data/sal/triples`, the deployed table root is `gs://my-bucket/sal/triples`.
     - An explicit object-store path or prefix like `gs://my-bucket/sal/triples` or `gs://my-bucket?prefix=sal/triples/` is treated as the table root when there is exactly one Iceberg table.
+    - `https://storage.googleapis.com/<bucket>/...` is a supported GCS-compatible URL form. Deploy must upload through the GCS blob driver but write `https://storage.googleapis.com/<bucket>/...` paths into Iceberg metadata so S3-compatible tooling can resolve the table through HTTPS.
     - Multiple Iceberg tables always preserve their relative table paths under the bucket root or prefix.
 - Upload ordering matters for readers: data files first, metadata files second, and `metadata/version-hint.text` last.
-- Object-store deploys (`gs`, `s3`, `azblob`) must use fresh metadata object names during deploy. Reusing the same Avro manifest object names can leave DuckDB or HTTP/object-store caches reading stale manifests after a redeploy.
+- Object-store deploys (`gs`, `s3`, `azblob`, and `https://storage.googleapis.com`) must use fresh metadata object names during deploy. Reusing the same Avro manifest object names can leave DuckDB or HTTP/object-store caches reading stale manifests after a redeploy.
     - Fresh deploy metadata includes renamed Avro metadata files, updated references to those renamed files, a new `v<number>.metadata.json`, and a `version-hint.text` pointing to that version.
     - `version-hint.text` must not include a trailing newline; DuckDB treats the newline as part of the version string.
-- Do not percent-escape Iceberg `file_path` values during metadata rewrite. The local partition directory names may contain literal percent-encoded values like `predicate_partition=http%3A%2F%2Fschema.org%2Fte`; DuckDB and the object-store client handle URL encoding when fetching the object.
+- Percent escaping depends on the table root scheme:
+    - Do not percent-escape Iceberg `file_path` values for `gs://`, `s3://`, or `azblob://` metadata roots. The object-store client handles URL encoding when fetching the object.
+    - Do percent-escape child path suffixes for literal `http://` or `https://` metadata roots. Local partition directory names may contain literal percent-encoded values like `predicate_partition=http%3A%2F%2Fschema.org%2Fte`; in an HTTPS URL these percent signs must become `%25` so the remote object key resolves correctly.
 - The key deploy verification query is:
 
 ```sql

@@ -102,9 +102,23 @@ func TestDeployConvertsGCSPathToUploadPrefix(t *testing.T) {
 	require.Equal(t, "gs://my-bucket?prefix=sal%2F", openedURL)
 }
 
+func TestDeployConvertsStorageGoogleapisURLToGCSUploadURL(t *testing.T) {
+	dataDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "file.txt"), []byte("contents"), 0644))
+
+	var openedURL string
+	err := deploy(context.Background(), dataDir, "https://storage.googleapis.com/my-bucket/sal/", func(_ context.Context, url string) (*blob.Bucket, error) {
+		openedURL = url
+		return nil, fmt.Errorf("stop after URL capture")
+	})
+	require.ErrorContains(t, err, "stop after URL capture")
+	require.Equal(t, "gs://my-bucket?prefix=sal%2F", openedURL)
+}
+
 func TestObjectBaseURLIncludesPathAndPrefix(t *testing.T) {
 	require.Equal(t, "gs://my-bucket/sal/project/triples", joinRemote(objectBaseURL("gs://my-bucket/sal/"), "project/triples"))
 	require.Equal(t, "gs://my-bucket/sal/project/triples", joinRemote(objectBaseURL("gs://my-bucket?prefix=sal/"), "project/triples"))
+	require.Equal(t, "https://storage.googleapis.com/my-bucket/sal/project/triples", joinRemote(objectBaseURL("https://storage.googleapis.com/my-bucket/sal/"), "project/triples"))
 }
 
 func TestRewriteStagedIcebergRootsUsesExactBucketURLForSingleTable(t *testing.T) {
@@ -139,6 +153,22 @@ func TestRewriteStagedIcebergRootsPreservesTablePathForBareBucket(t *testing.T) 
 	require.Contains(t, string(metadata), `"location": "gs://sal-test-bucket/sal/triples"`)
 }
 
+func TestRewriteStagedIcebergRootsUsesStorageGoogleapisRemotePaths(t *testing.T) {
+	dataDir := t.TempDir()
+	tablePath := filepath.Join(dataDir, "sal", "triples")
+	require.NoError(t, os.MkdirAll(filepath.Join(tablePath, "metadata"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"), []byte(`{
+		"location": "`+filepath.ToSlash(tablePath)+`",
+		"snapshots": []
+	}`), 0644))
+
+	require.NoError(t, rewriteStagedIcebergRoots(dataDir, "https://storage.googleapis.com/sal-test-bucket/"))
+
+	metadata, err := os.ReadFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(metadata), `"location": "https://storage.googleapis.com/sal-test-bucket/sal/triples"`)
+}
+
 func TestDeployUploadRootUsesSingleIcebergTableDirectoryForExplicitTableRoot(t *testing.T) {
 	dataDir := t.TempDir()
 	tablePath := filepath.Join(dataDir, "sal", "triples")
@@ -150,6 +180,17 @@ func TestDeployUploadRootUsesSingleIcebergTableDirectoryForExplicitTableRoot(t *
 	require.Equal(t, tablePath, uploadRoot)
 }
 
+func TestDeployUploadRootUsesSingleIcebergTableDirectoryForExplicitStorageGoogleapisRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	tablePath := filepath.Join(dataDir, "sal", "triples")
+	require.NoError(t, os.MkdirAll(filepath.Join(tablePath, "metadata"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"), []byte("{}"), 0644))
+
+	uploadRoot, err := deployUploadRoot(dataDir, "https://storage.googleapis.com/my-bucket/sal/triples")
+	require.NoError(t, err)
+	require.Equal(t, tablePath, uploadRoot)
+}
+
 func TestDeployUploadRootPreservesLayoutForBareBucket(t *testing.T) {
 	dataDir := t.TempDir()
 	tablePath := filepath.Join(dataDir, "sal", "triples")
@@ -157,6 +198,17 @@ func TestDeployUploadRootPreservesLayoutForBareBucket(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"), []byte("{}"), 0644))
 
 	uploadRoot, err := deployUploadRoot(dataDir, "gs://my-bucket/")
+	require.NoError(t, err)
+	require.Equal(t, dataDir, uploadRoot)
+}
+
+func TestDeployUploadRootPreservesLayoutForBareStorageGoogleapisBucket(t *testing.T) {
+	dataDir := t.TempDir()
+	tablePath := filepath.Join(dataDir, "sal", "triples")
+	require.NoError(t, os.MkdirAll(filepath.Join(tablePath, "metadata"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(tablePath, "metadata", "v1.metadata.json"), []byte("{}"), 0644))
+
+	uploadRoot, err := deployUploadRoot(dataDir, "https://storage.googleapis.com/my-bucket/")
 	require.NoError(t, err)
 	require.Equal(t, dataDir, uploadRoot)
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,8 +92,9 @@ func RewriteIcebergTableRoot(tablePath string, newRoot string) (int, error) {
 	}
 
 	rewrite := rootRewriter{
-		oldRoot: normalizeRoot(oldRoot),
-		newRoot: normalizeRoot(newRoot),
+		oldRoot:       normalizeRoot(oldRoot),
+		newRoot:       normalizeRoot(newRoot),
+		escapeURIPath: shouldEscapeURIPath(newRoot),
 	}
 	if rewrite.oldRoot == rewrite.newRoot {
 		return 0, nil
@@ -110,8 +112,9 @@ func RewriteIcebergTableRoot(tablePath string, newRoot string) (int, error) {
 func RewriteIcebergMetadataPath(tablePath string, oldPath string, newPath string) (int, error) {
 	metadataDir := filepath.Join(tablePath, "metadata")
 	rewrite := rootRewriter{
-		oldRoot: normalizeRoot(oldPath),
-		newRoot: normalizeRoot(newPath),
+		oldRoot:       normalizeRoot(oldPath),
+		newRoot:       normalizeRoot(newPath),
+		escapeURIPath: shouldEscapeURIPath(newPath),
 	}
 	if rewrite.oldRoot == rewrite.newRoot {
 		return 0, nil
@@ -209,8 +212,9 @@ func metadataVersion(path string) int {
 }
 
 type rootRewriter struct {
-	oldRoot string
-	newRoot string
+	oldRoot       string
+	newRoot       string
+	escapeURIPath bool
 }
 
 func (r rootRewriter) rewriteString(value string) (string, bool) {
@@ -219,9 +223,26 @@ func (r rootRewriter) rewriteString(value string) (string, bool) {
 		return r.newRoot, true
 	}
 	if strings.HasPrefix(value, r.oldRoot+"/") {
-		return r.newRoot + strings.TrimPrefix(value, r.oldRoot), true
+		suffix := strings.TrimPrefix(value, r.oldRoot)
+		if r.escapeURIPath {
+			suffix = escapeURIPathSuffix(suffix)
+		}
+		return r.newRoot + suffix, true
 	}
 	return value, false
+}
+
+func shouldEscapeURIPath(root string) bool {
+	u, err := url.Parse(root)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "http" || u.Scheme == "https"
+}
+
+func escapeURIPathSuffix(path string) string {
+	u := url.URL{Path: path}
+	return u.EscapedPath()
 }
 
 func normalizeRoot(root string) string {
