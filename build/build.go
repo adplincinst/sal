@@ -31,6 +31,7 @@ type BuildCmd struct {
 	Paths      []string          `arg:"positional" help:"RDF files to validate"`
 	PrefixMaps []string          `arg:"--prefix-maps" help:"prefix mappings to apply as source target pairs or source=target entries"`
 	Format     GraphExportFormat `arg:"--format" help:"output format: nq or iceberg" default:"iceberg"`
+	Force      bool              `arg:"--force" help:"force build even if there are uncommitted changes in the git repository"`
 
 	skipCommit bool
 }
@@ -116,8 +117,15 @@ func Run(cfg *BuildCmd) (*rdflibgo.Graph, error) {
 	if err != nil {
 		return nil, err
 	}
-	if hasChanges {
+	if hasChanges && !cfg.Force {
 		return finalGraph, ErrUncommittedChanges
+	}
+	if cfg.Force {
+		slog.Warn("creating build with modified source tree. This should only be done for testing purposes.")
+	}
+
+	if err := AddAdditionalDataFileMetadata(finalGraph); err != nil {
+		return nil, err
 	}
 
 	if err := ExportGraph(finalGraph, cfg.Format, hash); err != nil {
