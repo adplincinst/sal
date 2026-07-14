@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cgs-earth/sal/load"
+	"github.com/cgs-earth/sal/build/load"
 	"github.com/cgs-earth/sal/pkg"
 	rdflibgo "github.com/tggo/goRDFlib"
 	"github.com/tggo/goRDFlib/nq"
