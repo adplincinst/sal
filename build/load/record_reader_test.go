@@ -106,14 +106,20 @@ func TestProcessGraphDiffAddsAndRemovesByTripleHash(t *testing.T) {
 	first.Add(rdflibgo.NewURIRefUnsafe("http://example.com/keep"), predicate, rdflibgo.NewLiteral("same"))
 	first.Add(rdflibgo.NewURIRefUnsafe("http://example.com/drop"), predicate, rdflibgo.NewLiteral("old"))
 	require.NoError(t, processGraph(ctx, first, cat, tbl.Identifier(), arrowSchema, cfg.BatchSize, cfg.DataTypeCols))
+	loaded, err := cat.LoadTable(ctx, tbl.Identifier())
+	require.NoError(t, err)
+	firstSnapshotID := loaded.CurrentSnapshot().SnapshotID
 
 	second := rdflibgo.NewGraph()
 	second.Add(rdflibgo.NewURIRefUnsafe("http://example.com/keep"), predicate, rdflibgo.NewLiteral("same"))
 	second.Add(rdflibgo.NewURIRefUnsafe("http://example.com/add"), predicate, rdflibgo.NewLiteral("new"))
 	require.NoError(t, processGraph(ctx, second, cat, tbl.Identifier(), arrowSchema, cfg.BatchSize, cfg.DataTypeCols))
 
-	loaded, err := cat.LoadTable(ctx, tbl.Identifier())
+	loaded, err = cat.LoadTable(ctx, tbl.Identifier())
 	require.NoError(t, err)
+	require.NotNil(t, loaded.CurrentSnapshot().ParentSnapshotID)
+	require.Equal(t, firstSnapshotID, *loaded.CurrentSnapshot().ParentSnapshotID)
+	require.Equal(t, table.OpOverwrite, loaded.CurrentSnapshot().Summary.Operation)
 	hashes, err := readExistingTripleHashes(ctx, loaded)
 	require.NoError(t, err)
 
