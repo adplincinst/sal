@@ -8,6 +8,7 @@ import (
 	"github.com/apache/iceberg-go/catalog/hadoop"
 	"github.com/apache/iceberg-go/table"
 	"github.com/cgs-earth/sal/build/load"
+	"github.com/cgs-earth/sal/pkg"
 	"github.com/stretchr/testify/require"
 	rdflibgo "github.com/tggo/goRDFlib"
 )
@@ -73,6 +74,15 @@ func TestSquashSnapshotsCondensesLocalSnapshotsIntoNewSnapshot(t *testing.T) {
 	require.Equal(t, latestManifest, loaded.CurrentSnapshot().ManifestList)
 	require.NotNil(t, loaded.CurrentSnapshot().ParentSnapshotID)
 	require.Equal(t, snapshots[0], *loaded.CurrentSnapshot().ParentSnapshotID)
+
+	latestGitHash, err := pkg.GitCommitHash()
+	require.NoError(t, err)
+	refs := map[string]table.SnapshotRef{}
+	for name, ref := range loaded.Metadata().Refs() {
+		refs[name] = ref
+	}
+	require.Equal(t, table.TagRef, refs[latestGitHash].SnapshotRefType)
+	require.Equal(t, loaded.CurrentSnapshot().SnapshotID, refs[latestGitHash].SnapshotID)
 }
 
 func createTableWithSnapshots(t *testing.T, count int) (*hadoop.Catalog, *table.Table, []int64) {

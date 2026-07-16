@@ -127,11 +127,17 @@ func SquashSnapshots(tbl *table.Table, cat catalog.Catalog, localOnlySnapshotIDs
 	newSnapshot.SequenceNumber = tbl.Metadata().LastSequenceNumber() + 1
 	newSnapshot.TimestampMs = time.Now().UnixMilli()
 
+	latestGitHash, err := pkg.GitCommitHash()
+	if err != nil {
+		return err
+	}
+
 	currentSnapshotID := currentSnapshot.SnapshotID
 	requirements := []table.Requirement{table.AssertRefSnapshotID(table.MainBranch, &currentSnapshotID)}
 	updates := []table.Update{
 		table.NewAddSnapshotUpdate(&newSnapshot),
 		table.NewSetSnapshotRefUpdate(table.MainBranch, newSnapshot.SnapshotID, table.BranchRef, 0, 0, 0),
+		table.NewSetSnapshotRefUpdate(latestGitHash, newSnapshot.SnapshotID, table.TagRef, 0, 0, 0),
 		table.NewRemoveSnapshotsUpdate(ids, false),
 	}
 
@@ -300,6 +306,10 @@ func cleanDiff(cmd *CleanCmd) error {
 	if cmd.Squash {
 		if len(diff.SnapshotsInRemoteNotLocal) > 0 {
 			return fmt.Errorf("cannot squash local snapshots because the remote has snapshot(s) not present locally: %s", strings.Join(diff.SnapshotsInRemoteNotLocal, ", "))
+		}
+		if len(diff.SnapshotsInLocalNotRemote) == 0 {
+			slog.Info("Nothing to squash; local table has no snapshots ahead of remote")
+			return nil
 		}
 		if len(diff.SnapshotsInLocalNotRemote) < 2 {
 			slog.Info("Nothing to squash; local table has fewer than two snapshots ahead of remote")
