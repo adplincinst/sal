@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/cgs-earth/sal/pkg"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/cgs-earth/sal/pkg"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -22,7 +22,6 @@ import (
 const defaultRegistry = "ghcr.io"
 const maxConcurrentUploads = 4
 
-const SalIcebergSnapshotsAnnotation = "sal.iceberg-snapshots"
 const SalGitHashAnnotation = "sal.git-commit-hash"
 
 type PushCmd struct {
@@ -65,7 +64,7 @@ func push(ctx context.Context, dataDir string, repo *remote.Repository, destinat
 		return fmt.Errorf("no files found in SAL data directory: %s", dataDir)
 	}
 
-	SnapShots, err := pkg.GetSalSnapshots()
+	SnapShots, err := pkg.GetLocalSalSnapshots()
 	if err != nil {
 		return fmt.Errorf("error getting snapshot data %w", err)
 	}
@@ -123,7 +122,7 @@ func push(ctx context.Context, dataDir string, repo *remote.Repository, destinat
 			"org.opencontainers.image.source":      gitRemote,
 			SalGitHashAnnotation:                   gitHash,
 			"org.opencontainers.image.description": description,
-			SalIcebergSnapshotsAnnotation:          strings.Join(SnapShots, ","),
+			pkg.SalIcebergSnapshotsAnnotation:      strings.Join(SnapShots, ","),
 		},
 	})
 	if err != nil {

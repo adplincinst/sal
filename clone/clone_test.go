@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cgs-earth/sal/pkg"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 	"oras.land/oras-go/v2"
@@ -15,7 +16,7 @@ import (
 )
 
 func pull(ctx context.Context, src oras.ReadOnlyTarget, reference string, destination string) error {
-	desc, manifest, err := fetchManifest(ctx, src, reference)
+	desc, manifest, err := pkg.FetchManifest(ctx, src, reference)
 	if err != nil {
 		return err
 	}
@@ -82,47 +83,6 @@ func TestPullManifestLayersPreservesArtifactNamePrefix(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(destination, "triples"))
 }
 
-func TestParseArtifactDefaultsReferenceToLatest(t *testing.T) {
-	ref, err := parseArtifact("ghcr.io/my-username/my-repository")
-
-	require.NoError(t, err)
-	require.Equal(t, "ghcr.io/my-username/my-repository", ref.repository)
-	require.Equal(t, "latest", ref.reference)
-	require.Equal(t, "ghcr.io", ref.registryName)
-	require.Equal(t, "my-username", ref.owner)
-	require.Equal(t, "my-repository", ref.artifactName)
-}
-
-func TestParseArtifactStripsHTTPScheme(t *testing.T) {
-	ref, err := parseArtifact("https://ghcr.io/my-username/my-repository:v1")
-
-	require.NoError(t, err)
-	require.Equal(t, "ghcr.io/my-username/my-repository", ref.repository)
-	require.Equal(t, "v1", ref.reference)
-	require.Equal(t, "ghcr.io", ref.registryName)
-	require.Equal(t, "my-username", ref.owner)
-}
-
-func TestCredentialFromConfigInfersUsernameFromArtifactOwner(t *testing.T) {
-	ref, err := parseArtifact("ghcr.io/cgs-earth/sal:latest")
-	require.NoError(t, err)
-
-	credential := credentialFromConfig(&OciArtifactRetrievalCmd{Password: "token"}, ref)
-
-	require.Equal(t, "cgs-earth", credential.Username)
-	require.Equal(t, "token", credential.Password)
-}
-
-func TestCredentialFromConfigUsesExplicitUsername(t *testing.T) {
-	ref, err := parseArtifact("ghcr.io/cgs-earth/sal:latest")
-	require.NoError(t, err)
-
-	credential := credentialFromConfig(&OciArtifactRetrievalCmd{Username: "octocat", Password: "token"}, ref)
-
-	require.Equal(t, "octocat", credential.Username)
-	require.Equal(t, "token", credential.Password)
-}
-
 func TestMetadataFromManifestReadsSourceAndCommitAnnotations(t *testing.T) {
 	metadata, err := metadataFromManifest(ocispec.Manifest{
 		Annotations: map[string]string{
@@ -173,18 +133,6 @@ func TestMetadataFromManifestRequiresCommit(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), gitCommitAnnotation)
-}
-
-func TestRepoDirFromSourceHandlesHTTPSURLs(t *testing.T) {
-	got := repoDirFromSource("https://github.com/cgs-earth/sal.git")
-
-	require.Equal(t, "sal", got)
-}
-
-func TestRepoDirFromSourceHandlesSSHURLs(t *testing.T) {
-	got := repoDirFromSource("git@github.com:cgs-earth/sal.git")
-
-	require.Equal(t, "sal", got)
 }
 
 func TestCloneRepositoryUsesExplicitDestination(t *testing.T) {

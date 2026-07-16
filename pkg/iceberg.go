@@ -3,7 +3,6 @@ package pkg
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -51,17 +50,4 @@ func GetSalIcebergTable() (*table.Table, error) {
 
 	tableIdent := catalog.ToIdentifier(gitProjectName, DefaultSalIcebergTable)
 	return cat.LoadTable(ctx, tableIdent)
-}
-
-func GetSalSnapshots() ([]string, error) {
-
-	tbl, err := GetSalIcebergTable()
-	if err != nil {
-		return nil, err
-	}
-	var snapshots []string
-	for _, s := range tbl.Metadata().Snapshots() {
-		snapshots = append(snapshots, fmt.Sprintf("%d", s.SnapshotID))
-	}
-	return snapshots, nil
 }

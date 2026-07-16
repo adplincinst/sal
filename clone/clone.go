@@ -2,7 +2,6 @@ package clone
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,13 +11,11 @@ import (
 
 	_ "crypto/sha256"
 
+	"github.com/cgs-earth/sal/pkg"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content/file"
-	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
-	"oras.land/oras-go/v2/registry/remote/auth"
-	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
 const (
@@ -32,6 +29,20 @@ type OciArtifactRetrievalCmd struct {
 	Password    string `arg:"--password,env:OCI_PASSWORD" help:"Password for the OCI registry"`
 	Destination string `arg:"--destination" help:"Optional destination path for the cloned source repository. If not specified, git clone will create a directory in the current working directory"`
 }
+
+func (cmd *OciArtifactRetrievalCmd) GetUsername() string {
+	return cmd.Username
+}
+
+func (cmd *OciArtifactRetrievalCmd) GetPassword() string {
+	return cmd.Password
+}
+
+func (cmd *OciArtifactRetrievalCmd) GetArtifactReference() (pkg.ArtifactReference, error) {
+	return pkg.ParseArtifact(cmd.Artifact)
+}
+
+var _ pkg.OciArtifactCmdWithAuth = (*OciArtifactRetrievalCmd)(nil)
 
 type artifactMetadata struct {
 	source    string
@@ -48,20 +59,6 @@ func runCommand(ctx context.Context, dir string, name string, args ...string) er
 		return fmt.Errorf("%s %s failed: %s: %w", name, strings.Join(args, " "), strings.TrimSpace(string(out)), err)
 	}
 	return nil
-}
-
-func fetchManifest(ctx context.Context, src oras.ReadOnlyTarget, reference string) (ocispec.Descriptor, ocispec.Manifest, error) {
-	desc, manifestBytes, err := oras.FetchBytes(ctx, src, reference, oras.DefaultFetchBytesOptions)
-	if err != nil {
-		return ocispec.Descriptor{}, ocispec.Manifest{}, fmt.Errorf("fetch artifact manifest %s: %w", reference, err)
-	}
-
-	var manifest ocispec.Manifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return ocispec.Descriptor{}, ocispec.Manifest{}, fmt.Errorf("decode artifact manifest %s: %w", reference, err)
-	}
-
-	return desc, manifest, nil
 }
 
 func metadataFromManifest(manifest ocispec.Manifest) (artifactMetadata, error) {
@@ -81,18 +78,6 @@ func metadataFromManifest(manifest ocispec.Manifest) (artifactMetadata, error) {
 	return artifactMetadata{source: source, gitCommit: gitCommit}, nil
 }
 
-func repoDirFromSource(source string) string {
-	source = strings.TrimSuffix(source, "/")
-	source = strings.TrimSuffix(source, ".git")
-	if i := strings.LastIndex(source, "/"); i != -1 {
-		return source[i+1:]
-	}
-	if i := strings.LastIndex(source, ":"); i != -1 {
-		return source[i+1:]
-	}
-	return source
-}
-
 func cloneRepository(ctx context.Context, source string, destination string, run commandRunner) (string, error) {
 	if destination != "" {
 		if err := run(ctx, "", "git", "clone", source, destination); err != nil {
@@ -104,7 +89,7 @@ func cloneRepository(ctx context.Context, source string, destination string, run
 	if err := run(ctx, "", "git", "clone", source); err != nil {
 		return "", err
 	}
-	return repoDirFromSource(source), nil
+	return pkg.RepoDirFromSource(source), nil
 }
 
 // checkoutRepository pins the cloned source tree to the commit recorded in the
@@ -169,68 +154,21 @@ func pullManifestLayers(ctx context.Context, src oras.ReadOnlyTarget, manifest o
 	return nil
 }
 
-type artifactReference struct {
-	repository   string
-	reference    string
-	registryName string
-	owner        string
-	artifactName string
-}
-
-func parseArtifact(artifact string) (artifactReference, error) {
-	artifact = strings.TrimPrefix(artifact, "https://")
-	artifact = strings.TrimPrefix(artifact, "http://")
-
-	ref, err := registry.ParseReference(artifact)
-	if err != nil {
-		return artifactReference{}, fmt.Errorf("invalid OCI artifact reference: %w", err)
-	}
-
-	owner, _, _ := strings.Cut(ref.Repository, "/")
-	artifactName := repoDirFromSource(ref.Repository)
-	return artifactReference{
-		repository:   ref.Registry + "/" + ref.Repository,
-		reference:    ref.ReferenceOrDefault(),
-		registryName: ref.Registry,
-		owner:        owner,
-		artifactName: artifactName,
-	}, nil
-}
-
-func credentialFromConfig(cfg *OciArtifactRetrievalCmd, ref artifactReference) auth.Credential {
-	username := cfg.Username
-	if username == "" && cfg.Password != "" {
-		username = ref.owner
-	}
-
-	return auth.Credential{
-		Username: username,
-		Password: cfg.Password,
-	}
-}
-
-func (cfg *OciArtifactRetrievalCmd) RunClone() error {
+func (cmd *OciArtifactRetrievalCmd) RunClone() error {
 	ctx := context.Background()
-	ref, err := parseArtifact(cfg.Artifact)
+	ref, err := pkg.ParseArtifact(cmd.Artifact)
 	if err != nil {
 		return err
 	}
 
-	repo, err := remote.NewRepository(ref.repository)
+	repo, err := remote.NewRepository(ref.Repository)
 	if err != nil {
 		return fmt.Errorf("failed creating OCI registry client: %w", err)
 	}
 
-	if cfg.Username != "" || cfg.Password != "" {
-		credential := credentialFromConfig(cfg, ref)
-		repo.Client = &auth.Client{
-			Client:     retry.DefaultClient,
-			Cache:      auth.NewCache(),
-			Credential: auth.StaticCredential(ref.registryName, credential),
-		}
-	}
+	repo.Client = pkg.NewOciClientWithOptionalAuth(cmd, ref)
 
-	desc, manifest, err := fetchManifest(ctx, repo, ref.reference)
+	desc, manifest, err := pkg.FetchManifest(ctx, repo, ref.Reference)
 	if err != nil {
 		return err
 	}
@@ -240,7 +178,7 @@ func (cfg *OciArtifactRetrievalCmd) RunClone() error {
 		return err
 	}
 
-	repoDir, err := cloneRepository(ctx, metadata.source, cfg.Destination, runCommand)
+	repoDir, err := cloneRepository(ctx, metadata.source, cmd.Destination, runCommand)
 	if err != nil {
 		return fmt.Errorf("clone source repository: %w", err)
 	}
@@ -253,5 +191,5 @@ func (cfg *OciArtifactRetrievalCmd) RunClone() error {
 	}
 
 	dataDir := filepath.Join(repoDir, ".sal", "data")
-	return pullManifestLayers(ctx, repo, manifest, desc, ref.reference, dataDir)
+	return pullManifestLayers(ctx, repo, manifest, desc, ref.Reference, dataDir)
 }

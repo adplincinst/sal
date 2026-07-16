@@ -1,0 +1,99 @@
+package pkg
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2"
+	"oras.land/oras-go/v2/registry"
+	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/retry"
+)
+
+type CmdWithAuth interface {
+	GetUsername() string
+	GetPassword() string
+}
+
+type OciArtifactCmdWithAuth interface {
+	CmdWithAuth
+	GetArtifactReference() (ArtifactReference, error)
+}
+
+func FetchManifest(ctx context.Context, src oras.ReadOnlyTarget, reference string) (ocispec.Descriptor, ocispec.Manifest, error) {
+	desc, manifestBytes, err := oras.FetchBytes(ctx, src, reference, oras.DefaultFetchBytesOptions)
+	if err != nil {
+		return ocispec.Descriptor{}, ocispec.Manifest{}, fmt.Errorf("fetch artifact manifest %s: %w", reference, err)
+	}
+
+	var manifest ocispec.Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return ocispec.Descriptor{}, ocispec.Manifest{}, fmt.Errorf("decode artifact manifest %s: %w", reference, err)
+	}
+
+	return desc, manifest, nil
+}
+
+func RepoDirFromSource(source string) string {
+	source = strings.TrimSuffix(source, "/")
+	source = strings.TrimSuffix(source, ".git")
+	if i := strings.LastIndex(source, "/"); i != -1 {
+		return source[i+1:]
+	}
+	if i := strings.LastIndex(source, ":"); i != -1 {
+		return source[i+1:]
+	}
+	return source
+}
+
+type ArtifactReference struct {
+	Repository   string
+	Reference    string
+	RegistryName string
+	Owner        string
+	ArtifactName string
+}
+
+func ParseArtifact(artifact string) (ArtifactReference, error) {
+	artifact = strings.TrimPrefix(artifact, "https://")
+	artifact = strings.TrimPrefix(artifact, "http://")
+
+	ref, err := registry.ParseReference(artifact)
+	if err != nil {
+		return ArtifactReference{}, fmt.Errorf("invalid OCI artifact reference: %w", err)
+	}
+
+	owner, _, _ := strings.Cut(ref.Repository, "/")
+	artifactName := RepoDirFromSource(ref.Repository)
+	return ArtifactReference{
+		Repository:   ref.Registry + "/" + ref.Repository,
+		Reference:    ref.ReferenceOrDefault(),
+		RegistryName: ref.Registry,
+		Owner:        owner,
+		ArtifactName: artifactName,
+	}, nil
+}
+
+func NewOciClientWithOptionalAuth(cmd OciArtifactCmdWithAuth, ref ArtifactReference) *auth.Client {
+	username := cmd.GetUsername()
+	password := cmd.GetPassword()
+	if password != "" || username != "" {
+		if username == "" && password != "" {
+			username = ref.Owner
+		}
+
+		credential := auth.Credential{
+			Username: username,
+			Password: password,
+		}
+		return &auth.Client{
+			Client:     retry.DefaultClient,
+			Cache:      auth.NewCache(),
+			Credential: auth.StaticCredential(ref.RegistryName, credential),
+		}
+	}
+	return auth.DefaultClient
+}
