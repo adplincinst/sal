@@ -7,3 +7,4 @@ sal_cli
 sal-cli
 sal
 .sal/data
+.env

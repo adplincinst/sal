@@ -19,7 +19,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
-const defaultRegistry = "ghcr.io"
 const maxConcurrentUploads = 4
 
 const SalGitHashAnnotation = "sal.git-commit-hash"
@@ -165,7 +164,7 @@ func (p *PushCmd) Run() error {
 		if err != nil {
 			return fmt.Errorf("failed to get Git project name: %w", err)
 		}
-		destination = defaultRegistry + "/" + username + "/" + projectName
+		destination = pkg.DefaultAssumedRegistry + "/" + username + "/" + projectName
 		slog.Info("No registry/repository specified, using " + destination + " as the default registry.")
 	} else {
 		destination = strings.TrimPrefix(destination, "https://")

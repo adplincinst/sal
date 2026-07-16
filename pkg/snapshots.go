@@ -22,13 +22,13 @@ func GetSnapshotsFromManifest(manifest ocispec.Manifest) ([]string, error) {
 var ErrLocalHasDiverged = fmt.Errorf("local data product has diverged from remote")
 var ErrNothingToPull = fmt.Errorf("no snapshots to pull")
 
-type snapshotDiff struct {
-	diverged                  bool
-	snapshotsInRemoteNotLocal []string
-	snapshotsInLocalNotRemote []string
+type SnapshotDiffReport struct {
+	Diverged                  bool
+	SnapshotsInRemoteNotLocal []string
+	SnapshotsInLocalNotRemote []string
 }
 
-func SnapshotDiff(localSnapshots []string, remoteSnapshots []string) (snapshotDiff, error) {
+func SnapshotDiff(localSnapshots []string, remoteSnapshots []string) (SnapshotDiffReport, error) {
 
 	slog.Debug("snapshots", "local", localSnapshots, "remote", remoteSnapshots)
 
@@ -36,18 +36,18 @@ func SnapshotDiff(localSnapshots []string, remoteSnapshots []string) (snapshotDi
 
 	for i := range n {
 		if localSnapshots[i] != remoteSnapshots[i] {
-			return snapshotDiff{diverged: true, snapshotsInRemoteNotLocal: remoteSnapshots[i:], snapshotsInLocalNotRemote: localSnapshots[i:]}, fmt.Errorf("%w: snapshot mismatch at index %d. Found local snapshot %s but remote snapshot %s", ErrLocalHasDiverged, i, localSnapshots[i], remoteSnapshots[i])
+			return SnapshotDiffReport{Diverged: true, SnapshotsInRemoteNotLocal: remoteSnapshots[i:], SnapshotsInLocalNotRemote: localSnapshots[i:]}, fmt.Errorf("%w: snapshot mismatch at index %d. Found local snapshot %s but remote snapshot %s", ErrLocalHasDiverged, i, localSnapshots[i], remoteSnapshots[i])
 		}
 	}
 
 	if len(localSnapshots) > len(remoteSnapshots) {
-		return snapshotDiff{diverged: true, snapshotsInLocalNotRemote: localSnapshots[len(remoteSnapshots):]}, fmt.Errorf("%w: local is ahead of remote by %d snapshots", ErrNothingToPull, len(localSnapshots)-len(remoteSnapshots))
+		return SnapshotDiffReport{Diverged: true, SnapshotsInLocalNotRemote: localSnapshots[len(remoteSnapshots):]}, fmt.Errorf("%w: local is ahead of remote by %d snapshots", ErrNothingToPull, len(localSnapshots)-len(remoteSnapshots))
 	}
 	if len(localSnapshots) == len(remoteSnapshots) {
-		return snapshotDiff{}, fmt.Errorf("%w: found the same %d snapshots both locally and remote", ErrNothingToPull, len(remoteSnapshots))
+		return SnapshotDiffReport{}, fmt.Errorf("%w: found the same %d snapshots both locally and remote", ErrNothingToPull, len(remoteSnapshots))
 	}
 
-	return snapshotDiff{}, nil
+	return SnapshotDiffReport{}, nil
 }
 
 func GetLocalSalSnapshots() ([]string, error) {

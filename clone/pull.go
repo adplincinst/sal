@@ -14,7 +14,7 @@ import (
 func (cmd *OciArtifactRetrievalCmd) RunPull() error {
 	ctx := context.Background()
 
-	ref, err := pkg.ParseArtifact(cmd.Artifact)
+	ref, err := cmd.GetArtifactReference()
 	if err != nil {
 		return err
 	}
@@ -23,6 +23,8 @@ func (cmd *OciArtifactRetrievalCmd) RunPull() error {
 	if err != nil {
 		return fmt.Errorf("failed creating OCI registry client: %w", err)
 	}
+
+	repo.Client = pkg.NewOciClientWithOptionalAuth(cmd, ref)
 
 	desc, manifest, err := pkg.FetchManifest(ctx, repo, ref.Reference)
 	if err != nil {

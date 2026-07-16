@@ -13,6 +13,8 @@ import (
 	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
+const DefaultAssumedRegistry = "ghcr.io"
+
 type CmdWithAuth interface {
 	GetUsername() string
 	GetPassword() string
@@ -57,7 +59,29 @@ type ArtifactReference struct {
 	ArtifactName string
 }
 
+func GuessDefaultArtifact() (string, error) {
+	gitProjectName, err := GitProjectName()
+	if err != nil {
+		return "", err
+	}
+	gitProjectOwner, err := GitProjectOwner()
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%s/%s/%s:latest", DefaultAssumedRegistry, gitProjectOwner, gitProjectName), nil
+}
+
 func ParseArtifact(artifact string) (ArtifactReference, error) {
+
+	if artifact == "" {
+		var err error
+		artifact, err = GuessDefaultArtifact()
+		if err != nil {
+			return ArtifactReference{}, err
+		}
+	}
+
 	artifact = strings.TrimPrefix(artifact, "https://")
 	artifact = strings.TrimPrefix(artifact, "http://")
 
@@ -77,7 +101,7 @@ func ParseArtifact(artifact string) (ArtifactReference, error) {
 	}, nil
 }
 
-func NewOciClientWithOptionalAuth(cmd OciArtifactCmdWithAuth, ref ArtifactReference) *auth.Client {
+func NewOciClientWithOptionalAuth(cmd CmdWithAuth, ref ArtifactReference) *auth.Client {
 	username := cmd.GetUsername()
 	password := cmd.GetPassword()
 	if password != "" || username != "" {
