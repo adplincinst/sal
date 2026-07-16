@@ -193,3 +193,11 @@ func BytesToHumanReadable(bytes int64) string {
 	}
 	return fmt.Sprintf("%.2f KB", float64(bytes)/1024)
 }
+
+func GetLatestCommitMsg() (string, error) {
+	out, err := exec.Command("git", "log", "-1", "--pretty=%B").Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get latest git commit message: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}

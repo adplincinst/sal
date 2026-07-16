@@ -33,6 +33,18 @@ func TestQueryForInfoRejectsUnknownInfo(t *testing.T) {
 	_, err := queryForInfo("bogus", "/tmp/table")
 
 	require.ErrorContains(t, err, "unknown info option")
+	require.ErrorContains(t, err, "tags")
+}
+
+func TestQueryForInfoBuildsTagsQuery(t *testing.T) {
+	query, err := queryForInfo("tags", "/tmp/table")
+
+	require.NoError(t, err)
+	require.Contains(t, query, "read_text('/tmp/table/metadata/*.metadata.json')")
+	require.Contains(t, query, "json_each(json_extract(metadata_json, '$.refs'))")
+	require.Contains(t, query, "WHERE json_extract_string(ref_json, '$.type') = 'tag'")
+	require.Contains(t, query, "snapshot_id")
+	require.Contains(t, query, "ORDER BY tag")
 }
 
 func TestSnapshotForDiffUsesCurrentSnapshotForLatest(t *testing.T) {

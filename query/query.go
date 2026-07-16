@@ -16,7 +16,7 @@ import (
 )
 
 type QueryCmd struct {
-	Info         string `help:"Retrieve quick info about the data product. Options: head, snapshots, column-stats properties" default:"head"`
+	Info         string `help:"Retrieve quick info about the data product. Options: head, snapshots, column-stats properties tags" default:"head"`
 	SnapshotDiff string `arg:"--snapshot-diff" help:"Show rows added and removed by the specified Iceberg snapshot ID. Specify 'latest' for the latest snapshot."`
 }
 
@@ -134,8 +134,34 @@ ORDER BY prop.key`, escapedTablePath), nil
 		return fmt.Sprintf("SELECT * FROM iceberg_snapshots('%s')", escapedTablePath), nil
 	case "column-stats":
 		return fmt.Sprintf("SELECT * FROM iceberg_column_stats('%s')", escapedTablePath), nil
+	case "tags":
+		return fmt.Sprintf(`
+WITH latest_metadata AS (
+	SELECT
+		filename,
+		content::JSON AS metadata_json
+	FROM read_text('%s/metadata/*.metadata.json')
+	ORDER BY regexp_extract(filename, 'v([0-9]+)\.metadata\.json', 1)::BIGINT DESC
+	LIMIT 1
+),
+refs AS (
+	SELECT
+		ref.key AS tag,
+		ref.value AS ref_json
+	FROM latest_metadata,
+	json_each(json_extract(metadata_json, '$.refs')) AS ref
+)
+SELECT
+	tag,
+	json_extract(ref_json, '$."snapshot-id"')::BIGINT AS snapshot_id,
+	json_extract(ref_json, '$."max-ref-age-ms"')::BIGINT AS max_ref_age_ms,
+	json_extract(ref_json, '$."min-snapshots-to-keep"')::BIGINT AS min_snapshots_to_keep,
+	json_extract(ref_json, '$."max-snapshot-age-ms"')::BIGINT AS max_snapshot_age_ms
+FROM refs
+WHERE json_extract_string(ref_json, '$.type') = 'tag'
+ORDER BY tag`, escapedTablePath), nil
 	default:
-		return "", fmt.Errorf("unknown info option %q; expected one of: head, properties, snapshots, column-stats", info)
+		return "", fmt.Errorf("unknown info option %q; expected one of: head, properties, snapshots, column-stats, tags", info)
 	}
 }
 

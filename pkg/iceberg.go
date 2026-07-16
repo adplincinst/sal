@@ -3,6 +3,7 @@ package pkg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -50,4 +51,28 @@ func GetSalIcebergTable() (*table.Table, error) {
 
 	tableIdent := catalog.ToIdentifier(gitProjectName, DefaultSalIcebergTable)
 	return cat.LoadTable(ctx, tableIdent)
+}
+
+func SetTagOfLatestSnapshot(tbl *table.Table, cat catalog.Catalog) error {
+	newSnapshot := tbl.CurrentSnapshot()
+	if newSnapshot == nil {
+		return fmt.Errorf("failed to get latest snapshot")
+	}
+
+	latestGitHash, err := GitCommitHash()
+	if err != nil {
+		return err
+	}
+
+	update := table.NewSetSnapshotRefUpdate(
+		latestGitHash,
+		newSnapshot.SnapshotID,
+		table.TagRef,
+		0,
+		0,
+		0,
+	)
+
+	_, _, err = cat.CommitTable(context.Background(), tbl.Identifier(), nil, []table.Update{update})
+	return err
 }

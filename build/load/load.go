@@ -13,6 +13,7 @@ import (
 	"github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/catalog/hadoop"
 	"github.com/apache/iceberg-go/table"
+	"github.com/cgs-earth/sal/pkg"
 	rdflibgo "github.com/tggo/goRDFlib"
 )
 
@@ -99,7 +100,11 @@ func WriteGraphToIceberg(ctx context.Context, graph *rdflibgo.Graph, cfg *LoadCo
 	}
 
 	_, err = tx.Commit(context.Background())
-	return err
+	if err != nil {
+		return err
+	}
+
+	return pkg.SetTagOfLatestSnapshot(tbl, cat)
 }
 
 // processGraph writes an RDF graph to Iceberg data files, then commits them in one snapshot.
