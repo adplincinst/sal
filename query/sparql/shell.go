@@ -76,16 +76,7 @@ func (r DuckDBRunner) Geometries(ctx context.Context, limit int, offset int) (Fe
 	if offset < 0 {
 		offset = 0
 	}
-	sql := fmt.Sprintf(`
-SELECT
-	subject,
-	predicate,
-	object,
-	ST_AsGeoJSON(ST_GeomFromWKB(object_geometry)) AS geometry
-FROM triples
-WHERE object_geometry IS NOT NULL
-LIMIT %d
-OFFSET %d`, limit, offset)
+	sql := geometrySQL(r.Layout, limit, offset)
 	result, err := r.runSQL(ctx, sql)
 	if err != nil {
 		return FeatureCollection{}, err
@@ -109,6 +100,24 @@ OFFSET %d`, limit, offset)
 		Type:     "FeatureCollection",
 		Features: features,
 	}, nil
+}
+
+// geometrySQL builds the map data query for both legacy and typed object column layouts.
+func geometrySQL(layout ObjectLayout, limit int, offset int) string {
+	objectExpr := "object"
+	if layout == TypedObjects {
+		objectExpr = "COALESCE(object_iri, CAST(object_float AS VARCHAR), object_string)"
+	}
+	return fmt.Sprintf(`
+SELECT
+	subject,
+	predicate,
+	%s AS object,
+	ST_AsGeoJSON(ST_GeomFromWKB(object_geometry)) AS geometry
+FROM triples
+WHERE object_geometry IS NOT NULL
+LIMIT %d
+OFFSET %d`, objectExpr, limit, offset)
 }
 
 func (r DuckDBRunner) runSQL(ctx context.Context, sql string) (Result, error) {

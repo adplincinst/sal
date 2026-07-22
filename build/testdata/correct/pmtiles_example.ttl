@@ -1,6 +1,5 @@
 @prefix schema: <https://schema.org/> .
 @prefix dcat:   <http://www.w3.org/ns/dcat#> .
-@prefix dct:    <http://purl.org/dc/terms/> .
 
 <WWF_PMTiles>
     a dcat:Dataset ;
@@ -13,6 +12,5 @@
         "PMTiles",
         "vector tiles",
         "WWF" ;
-    dct:format "application/vnd.pmtiles" ;
     dcat:downloadURL <https://storage.googleapis.com/wwf-global-public-data/hydrobasins_lvl5_context.pmtiles> ;
     schema:isAccessibleForFree true .

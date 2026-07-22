@@ -39,6 +39,27 @@ func TestParseCSVResultReadsHeaderAndRows(t *testing.T) {
 	require.Equal(t, [][]string{{"https://example.org/a", "bob"}}, rows)
 }
 
+func TestGeometrySQLForTypedObjectsUsesTypedObjectColumns(t *testing.T) {
+	sql := geometrySQL(TypedObjects, 100, 12)
+
+	require.Contains(t, sql, "COALESCE(object_iri, CAST(object_float AS VARCHAR), object_string) AS object")
+	require.Contains(t, sql, "ST_AsGeoJSON(ST_GeomFromWKB(object_geometry)) AS geometry")
+	require.Contains(t, sql, "WHERE object_geometry IS NOT NULL")
+	require.Contains(t, sql, "LIMIT 100")
+	require.Contains(t, sql, "OFFSET 12")
+	require.NotContains(t, sql, "\n\tobject,\n")
+}
+
+func TestGeometrySQLForSimpleObjectsUsesObjectColumn(t *testing.T) {
+	sql := geometrySQL(SimpleObjects, 50, 0)
+
+	require.Contains(t, sql, "\n\tobject AS object,\n")
+	require.Contains(t, sql, "ST_AsGeoJSON(ST_GeomFromWKB(object_geometry)) AS geometry")
+	require.Contains(t, sql, "LIMIT 50")
+	require.Contains(t, sql, "OFFSET 0")
+	require.NotContains(t, sql, "object_iri")
+}
+
 func TestRenderTableShowsHeadersAndRows(t *testing.T) {
 	table := renderTable(
 		[]string{"subject", "name"},
