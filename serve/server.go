@@ -1,27 +1,38 @@
-package sparql
+package serve
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+
+	salsparql "github.com/cgs-earth/sal/query/sparql"
 )
 
 const sparqlResultsJSON = "application/sparql-results+json"
 
+//go:embed map.html
+var mapHTML string
+
 // Serve starts a read-only SPARQL Protocol HTTP endpoint backed by DuckDB.
-func Serve(ctx context.Context, addr string, tablePath string, layout ObjectLayout) error {
-	runner := DuckDBRunner{
+func Serve(ctx context.Context, addr string, tablePath string, layout salsparql.ObjectLayout, withMap bool) error {
+	runner := salsparql.DuckDBRunner{
 		TablePath: tablePath,
 		Layout:    layout,
 	}
+	handler := NewEndpoint(runner)
+	if withMap {
+		handler = NewEndpointWithMap(runner, runner)
+	}
 	server := &http.Server{
 		Addr:    addr,
-		Handler: NewEndpoint(runner),
+		Handler: handler,
 	}
 	go func() {
 		<-ctx.Done()
@@ -29,7 +40,11 @@ func Serve(ctx context.Context, addr string, tablePath string, layout ObjectLayo
 			slog.Error("failed to stop SPARQL endpoint", "error", err)
 		}
 	}()
-	fmt.Printf("Serving SPARQL endpoint at http://localhost%s/sparql\n", addr)
+	if withMap {
+		fmt.Printf("Serving map at http://localhost%s/ and SPARQL endpoint at http://localhost%s/sparql\n", addr, addr)
+	} else {
+		fmt.Printf("Serving SPARQL endpoint at http://localhost%s/sparql\n", addr)
+	}
 	err := server.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -38,7 +53,7 @@ func Serve(ctx context.Context, addr string, tablePath string, layout ObjectLayo
 }
 
 // NewEndpoint returns an HTTP handler for the SPARQL Protocol query operation.
-func NewEndpoint(runner Runner) http.Handler {
+func NewEndpoint(runner salsparql.Runner) http.Handler {
 	mux := http.NewServeMux()
 	handler := sparqlHandler{runner: runner}
 	mux.Handle("/", handler)
@@ -46,8 +61,18 @@ func NewEndpoint(runner Runner) http.Handler {
 	return mux
 }
 
+// NewEndpointWithMap returns an HTTP handler with a MapLibre UI at / and SPARQL at /sparql.
+func NewEndpointWithMap(runner salsparql.Runner, geometryRunner salsparql.GeometryRunner) http.Handler {
+	mux := http.NewServeMux()
+	sparql := sparqlHandler{runner: runner}
+	mux.Handle("/sparql", sparql)
+	mux.Handle("/geometries", geometryHandler{runner: geometryRunner})
+	mux.HandleFunc("/", mapHandler)
+	return mux
+}
+
 type sparqlHandler struct {
-	runner Runner
+	runner salsparql.Runner
 }
 
 func (h sparqlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +110,70 @@ func (h sparqlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(sparqlJSONResult(result)); err != nil {
 		slog.Error("failed to write SPARQL JSON result", "error", err)
 	}
+}
+
+type geometryHandler struct {
+	runner salsparql.GeometryRunner
+}
+
+func (h geometryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, OPTIONS")
+		http.Error(w, "geometry endpoint only supports GET requests", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := intQueryParam(r, "limit", 100)
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	offset := intQueryParam(r, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+
+	collection, err := h.runner.Geometries(r.Context(), limit, offset)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/geo+json")
+	if err := json.NewEncoder(w).Encode(collection); err != nil {
+		slog.Error("failed to write GeoJSON result", "error", err)
+	}
+}
+
+func intQueryParam(r *http.Request, name string, fallback int) int {
+	value := strings.TrimSpace(r.URL.Query().Get(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func mapHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "map only supports GET requests", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, mapHTML)
 }
 
 func queryFromRequest(r *http.Request) (string, error) {
@@ -168,7 +257,7 @@ type sparqlJSONResponse struct {
 	Results sparqlJSONResults `json:"results"`
 }
 
-func sparqlJSONResult(result Result) sparqlJSONResponse {
+func sparqlJSONResult(result salsparql.Result) sparqlJSONResponse {
 	bindings := make([]map[string]sparqlJSONBinding, 0, len(result.Rows))
 	for _, row := range result.Rows {
 		binding := make(map[string]sparqlJSONBinding)

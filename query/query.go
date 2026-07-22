@@ -20,7 +20,6 @@ type QueryCmd struct {
 	Info         string `help:"Retrieve quick info about the data product. Options: head, snapshots, column-stats properties" default:"head"`
 	SnapshotDiff string `arg:"--snapshot-diff" help:"Show rows added and removed by the specified Iceberg snapshot ID. Specify 'latest' for the latest snapshot."`
 	SPARQL       bool   `arg:"--sparql" help:"Open an interactive read-only SPARQL shell against the triples table"`
-	Serve        bool   `arg:"--serve" help:"Serve the built triples table as a read-only SPARQL endpoint on port 8080"`
 }
 
 func (cmd *QueryCmd) Run() error {
@@ -48,16 +47,8 @@ func (cmd *QueryCmd) Run() error {
 	tablePath := joinRemote(warehouse, namespace, "triples")
 	escapedTablePath := strings.ReplaceAll(tablePath, "'", "''")
 
-	if cmd.Serve {
-		layout, err := sparqlObjectLayoutForTable(context.Background(), warehouse, namespace)
-		if err != nil {
-			return err
-		}
-		return salsparql.Serve(context.Background(), ":8080", tablePath, layout)
-	}
-
 	if cmd.SPARQL {
-		layout, err := sparqlObjectLayoutForTable(context.Background(), warehouse, namespace)
+		layout, err := salsparql.ObjectLayoutForTable(context.Background(), warehouse, namespace)
 		if err != nil {
 			return err
 		}
@@ -127,23 +118,6 @@ FROM iceberg_scan('%s', allow_moved_paths = true);
 	}
 
 	return nil
-}
-
-func sparqlObjectLayoutForTable(ctx context.Context, warehouse string, namespace string) (salsparql.ObjectLayout, error) {
-	cat, err := hadoop.NewCatalog("local-catalog", warehouse, nil)
-	if err != nil {
-		return salsparql.SimpleObjects, fmt.Errorf("failed to create catalog: %w", err)
-	}
-	tbl, err := cat.LoadTable(ctx, table.Identifier{namespace, "triples"})
-	if err != nil {
-		return salsparql.SimpleObjects, fmt.Errorf("load table: %w", err)
-	}
-	for _, field := range tbl.Schema().Fields() {
-		if field.Name == "object_string" {
-			return salsparql.TypedObjects, nil
-		}
-	}
-	return salsparql.SimpleObjects, nil
 }
 
 func queryForInfo(info string, escapedTablePath string) (string, error) {

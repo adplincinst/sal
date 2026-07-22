@@ -1,30 +1,45 @@
-package sparql
+package serve
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	salsparql "github.com/cgs-earth/sal/query/sparql"
 	"github.com/stretchr/testify/require"
 )
 
 type endpointRunner struct {
-	result Result
+	result salsparql.Result
 	err    error
 	query  string
 }
 
-func (r *endpointRunner) Run(_ context.Context, query string) (Result, error) {
+func (r *endpointRunner) Run(_ context.Context, query string) (salsparql.Result, error) {
 	r.query = query
 	return r.result, r.err
 }
 
+type endpointGeometryRunner struct {
+	collection salsparql.FeatureCollection
+	err        error
+	limit      int
+	offset     int
+}
+
+func (r *endpointGeometryRunner) Geometries(_ context.Context, limit int, offset int) (salsparql.FeatureCollection, error) {
+	r.limit = limit
+	r.offset = offset
+	return r.collection, r.err
+}
+
 func TestEndpointAcceptsGETQueryAndReturnsSPARQLJSON(t *testing.T) {
-	runner := &endpointRunner{result: Result{
+	runner := &endpointRunner{result: salsparql.Result{
 		Header: []string{"s", "name"},
 		Rows: [][]string{
 			{"https://example.org/alice", "Alice"},
@@ -55,8 +70,62 @@ func TestEndpointAcceptsGETQueryAndReturnsSPARQLJSON(t *testing.T) {
 	require.Equal(t, "Alice", body.Results.Bindings[0]["name"].Value)
 }
 
+func TestEndpointWithMapServesMapAtRoot(t *testing.T) {
+	server := httptest.NewServer(NewEndpointWithMap(&endpointRunner{}, &endpointGeometryRunner{}))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "maplibre-gl")
+	require.Contains(t, string(body), "tiles.openfreemap.org")
+	require.Contains(t, string(body), "/geometries?limit=")
+}
+
+func TestEndpointWithMapReturnsGeometryFeatureCollection(t *testing.T) {
+	geometryRunner := &endpointGeometryRunner{collection: salsparql.FeatureCollection{
+		Type: "FeatureCollection",
+		Features: []salsparql.Feature{
+			{
+				Type:     "Feature",
+				Geometry: json.RawMessage(`{"type":"Point","coordinates":[-77.0365,38.8977]}`),
+				Properties: map[string]string{
+					"subject": "https://example.org/place",
+				},
+			},
+		},
+	}}
+	server := httptest.NewServer(NewEndpointWithMap(&endpointRunner{}, geometryRunner))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/geometries?limit=500&offset=12")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "application/geo+json", resp.Header.Get("Content-Type"))
+	require.Equal(t, 100, geometryRunner.limit)
+	require.Equal(t, 12, geometryRunner.offset)
+
+	var body salsparql.FeatureCollection
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Equal(t, "FeatureCollection", body.Type)
+	require.Len(t, body.Features, 1)
+	require.JSONEq(t, `{"type":"Point","coordinates":[-77.0365,38.8977]}`, string(body.Features[0].Geometry))
+	require.Equal(t, "https://example.org/place", body.Features[0].Properties["subject"])
+}
+
 func TestEndpointAcceptsFormPOSTQuery(t *testing.T) {
-	runner := &endpointRunner{result: Result{Header: []string{"s"}}}
+	runner := &endpointRunner{result: salsparql.Result{Header: []string{"s"}}}
 	server := httptest.NewServer(NewEndpoint(runner))
 	defer server.Close()
 
@@ -75,7 +144,7 @@ func TestEndpointAcceptsFormPOSTQuery(t *testing.T) {
 }
 
 func TestEndpointAcceptsSPARQLQueryPOSTBody(t *testing.T) {
-	runner := &endpointRunner{result: Result{Header: []string{"s"}}}
+	runner := &endpointRunner{result: salsparql.Result{Header: []string{"s"}}}
 	server := httptest.NewServer(NewEndpoint(runner))
 	defer server.Close()
 

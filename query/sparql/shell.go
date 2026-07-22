@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,6 +31,10 @@ type Result struct {
 
 type Runner interface {
 	Run(ctx context.Context, query string) (Result, error)
+}
+
+type GeometryRunner interface {
+	Geometries(ctx context.Context, limit int, offset int) (FeatureCollection, error)
 }
 
 type DuckDBRunner struct {
@@ -60,6 +65,53 @@ func (r DuckDBRunner) Run(ctx context.Context, query string) (Result, error) {
 		sql += fmt.Sprintf("\nLIMIT %d", r.Limit)
 	}
 
+	return r.runSQL(ctx, sql)
+}
+
+// Geometries reads a bounded page of WKB object geometries and converts them to GeoJSON features.
+func (r DuckDBRunner) Geometries(ctx context.Context, limit int, offset int) (FeatureCollection, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	sql := fmt.Sprintf(`
+SELECT
+	subject,
+	predicate,
+	object,
+	ST_AsGeoJSON(ST_GeomFromWKB(object_geometry)) AS geometry
+FROM triples
+WHERE object_geometry IS NOT NULL
+LIMIT %d
+OFFSET %d`, limit, offset)
+	result, err := r.runSQL(ctx, sql)
+	if err != nil {
+		return FeatureCollection{}, err
+	}
+	features := make([]Feature, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		if len(row) < 4 || strings.TrimSpace(row[3]) == "" {
+			continue
+		}
+		features = append(features, Feature{
+			Type:     "Feature",
+			Geometry: json.RawMessage(row[3]),
+			Properties: map[string]string{
+				"subject":   row[0],
+				"predicate": row[1],
+				"object":    row[2],
+			},
+		})
+	}
+	return FeatureCollection{
+		Type:     "FeatureCollection",
+		Features: features,
+	}, nil
+}
+
+func (r DuckDBRunner) runSQL(ctx context.Context, sql string) (Result, error) {
 	tablePath := strings.ReplaceAll(r.TablePath, "'", "''")
 	statement := fmt.Sprintf(`
 INSTALL iceberg;
