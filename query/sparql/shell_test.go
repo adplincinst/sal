@@ -99,17 +99,25 @@ func TestShellViewDelineatesEditorAndResults(t *testing.T) {
 	view := model.View().Content
 
 	require.Contains(t, view, "Editor")
+	require.Contains(t, view, "History")
 	require.Contains(t, view, "SQL")
 	require.Contains(t, view, "Results")
 	require.Contains(t, view, "Run a query to show results here.")
-	require.NotContains(t, view, "History")
 	require.Contains(t, view, "\x1b[")
+}
+
+func TestShellViewEnablesMouseSelection(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	view := model.View()
+
+	require.Equal(t, tea.MouseModeCellMotion, view.MouseMode)
 }
 
 func TestShellHelpStylesKeyboardDescriptions(t *testing.T) {
 	help := renderHelp()
 
 	require.Contains(t, help, shellHelpKeyStyle.Render("Tab"))
+	require.Contains(t, help, shellHelpKeyStyle.Render("Shift+←/→"))
 	require.Contains(t, help, shellHelpDescriptionStyle.Render("change focus"))
 	require.Contains(t, help, shellHelpKeyStyle.Render("Ctrl+U"))
 	require.Contains(t, help, shellHelpDescriptionStyle.Render("clear row"))
@@ -137,7 +145,9 @@ func TestRenderHistoryUsesFocusedStyle(t *testing.T) {
 
 	history := model.renderHistory(50)
 
-	require.Contains(t, history, focusedSectionTitleStyle.Render("History"))
+	require.Contains(t, history, focusedHistoryTitleStyle.Render("History"))
+	require.Contains(t, history, shellMutedStyle.Render("←"))
+	require.Contains(t, history, shellMutedStyle.Render("→"))
 	require.Contains(t, history, shellMutedStyle.Render("1/1"))
 	require.NotContains(t, history, "SELECT ?s WHERE {}")
 }
@@ -163,10 +173,34 @@ func TestRenderEditorKeepsStatusOutsideEditorBox(t *testing.T) {
 	editor := model.renderEditor(80)
 
 	editorIndex := strings.Index(editor, "Editor")
-	borderIndex := strings.Index(editor, "╭")
+	borderIndex := strings.Index(editor, "┏")
 	require.NotEqual(t, -1, editorIndex)
 	require.NotEqual(t, -1, borderIndex)
 	require.Less(t, editorIndex, borderIndex)
+}
+
+func TestRenderEditorUsesNeutralBorderWhenEditorIsBlurred(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT"
+	model.cursor = len(model.query)
+	model.focus = focusHistory
+
+	editor := model.renderEditor(80)
+
+	require.Contains(t, editor, sectionTitleStyle.Render("Editor"))
+	require.NotContains(t, editor, focusedSectionTitleStyle.Render("Editor"))
+	require.Contains(t, editor, "\x1b[38;2;108;122;153m")
+}
+
+func TestRenderEditorUsesThickBorderWhenFocused(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT"
+	model.cursor = len(model.query)
+
+	editor := model.renderEditor(80)
+
+	require.Contains(t, editor, "┏")
+	require.Contains(t, editor, "┗")
 }
 
 func TestRenderEditorBodyShowsCursor(t *testing.T) {
@@ -188,6 +222,14 @@ func TestRenderEditorBodyShowsSelection(t *testing.T) {
 	body := renderEditorBody("SELECT ?s WHERE {}", len("SELECT ?s"), len("SELECT "), len("SELECT ?s"))
 
 	require.Contains(t, body, editorSelectionStyle.Render("?s"))
+}
+
+func TestQueryOffsetAtLineColumnClampsToLineEnd(t *testing.T) {
+	query := "abc\ndef"
+
+	require.Equal(t, 3, queryOffsetAtLineColumn(query, 0, 20))
+	require.Equal(t, len("abc\nde"), queryOffsetAtLineColumn(query, 1, 2))
+	require.Equal(t, len(query), queryOffsetAtLineColumn(query, 10, 0))
 }
 
 func TestMoveCursorVerticallyMovesBetweenLines(t *testing.T) {
@@ -221,6 +263,150 @@ func TestShellModelSelectsAllWithCtrlA(t *testing.T) {
 	require.Equal(t, 0, model.selectionStart)
 	require.Equal(t, len([]rune(model.query)), model.selectionEnd)
 	require.Equal(t, len([]rune(model.query)), model.cursor)
+}
+
+func TestShellModelTabInsertsTabWhileEditorIsActive(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT  WHERE {}"
+	model.cursor = len("SELECT ")
+	model.result = Result{Header: []string{"s"}, Rows: [][]string{{"row"}}}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	model = updated.(shellModel)
+
+	require.Equal(t, focusEditor, model.focus)
+	require.Equal(t, "SELECT \t WHERE {}", model.query)
+	require.Equal(t, len("SELECT \t"), model.cursor)
+}
+
+func TestShellModelEscapeDoesNotChangeEditorState(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT ?s WHERE {}"
+	model.cursor = len("SELECT ?s")
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	model = updated.(shellModel)
+
+	require.Equal(t, focusEditor, model.focus)
+	require.Equal(t, "SELECT ?s WHERE {}", model.query)
+	require.Equal(t, len("SELECT ?s"), model.cursor)
+}
+
+func TestShellModelShiftRightChangesFocusToResults(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.result = Result{Header: []string{"s"}, Rows: [][]string{{"row"}}}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyRightShift})
+	model = updated.(shellModel)
+
+	require.Equal(t, focusResults, model.focus)
+}
+
+func TestShellModelShiftLeftBackToEditorReactivatesEditing(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT "
+	model.cursor = len(model.query)
+	model.result = Result{Header: []string{"s"}, Rows: [][]string{{"row"}}}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyRightShift})
+	model = updated.(shellModel)
+	require.Equal(t, focusResults, model.focus)
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyLeftShift})
+	model = updated.(shellModel)
+	require.Equal(t, focusEditor, model.focus)
+
+	updated, _ = model.Update(tea.KeyPressMsg{Text: "?s", Code: 's'})
+	model = updated.(shellModel)
+	require.Equal(t, "SELECT ?s", model.query)
+}
+
+func TestShellModelHistoryIgnoresTextInput(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.focus = focusHistory
+	model.query = "SELECT "
+	model.cursor = len(model.query)
+
+	updated, _ := model.Update(tea.KeyPressMsg{Text: "?s", Code: 's'})
+	model = updated.(shellModel)
+
+	require.Equal(t, focusHistory, model.focus)
+	require.Equal(t, "SELECT ", model.query)
+}
+
+func TestShellModelMouseClickMovesEditorCursor(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT ?s WHERE {}"
+	model.cursor = 0
+	x, y, _, _ := model.editorBodyBounds()
+
+	updated, _ := model.Update(tea.MouseClickMsg{X: x + len("SELECT "), Y: y, Button: tea.MouseLeft})
+	model = updated.(shellModel)
+
+	require.Equal(t, focusEditor, model.focus)
+	require.Equal(t, len("SELECT "), model.cursor)
+	require.Equal(t, model.cursor, model.selectionStart)
+	require.Equal(t, model.cursor, model.selectionEnd)
+	require.True(t, model.mouseSelecting)
+}
+
+func TestShellModelMouseDragSelectsEditorText(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT ?s WHERE {}"
+	x, y, _, _ := model.editorBodyBounds()
+
+	updated, _ := model.Update(tea.MouseClickMsg{X: x + len("SELECT "), Y: y, Button: tea.MouseLeft})
+	model = updated.(shellModel)
+	updated, _ = model.Update(tea.MouseMotionMsg{X: x + len("SELECT ?s"), Y: y, Button: tea.MouseLeft})
+	model = updated.(shellModel)
+
+	require.Equal(t, len("SELECT "), model.selectionStart)
+	require.Equal(t, len("SELECT ?s"), model.selectionEnd)
+	require.Equal(t, len("SELECT ?s"), model.cursor)
+	text, ok := model.selectedEditorText()
+	require.True(t, ok)
+	require.Equal(t, "?s", text)
+}
+
+func TestShellModelMouseReleaseFinishesEditorSelection(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT ?s\nWHERE {}"
+	x, y, _, _ := model.editorBodyBounds()
+
+	updated, _ := model.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	model = updated.(shellModel)
+	updated, _ = model.Update(tea.MouseReleaseMsg{X: x + len("WHERE"), Y: y + 1, Button: tea.MouseLeft})
+	model = updated.(shellModel)
+
+	require.False(t, model.mouseSelecting)
+	require.Equal(t, 0, model.selectionStart)
+	require.Equal(t, len("SELECT ?s\nWHERE"), model.selectionEnd)
+	require.Equal(t, len("SELECT ?s\nWHERE"), model.cursor)
+}
+
+func TestShellModelMouseClickOutsideEditorDoesNotMoveCursor(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT ?s WHERE {}"
+	model.cursor = len(model.query)
+
+	updated, _ := model.Update(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	model = updated.(shellModel)
+
+	require.Equal(t, len("SELECT ?s WHERE {}"), model.cursor)
+	require.False(t, model.mouseSelecting)
+}
+
+func TestShellModelMouseClickBelowEditorDoesNotMoveCursor(t *testing.T) {
+	model := newShellModel(context.Background(), &fakeRunner{})
+	model.query = "SELECT ?s WHERE {}"
+	model.cursor = len(model.query)
+	x, y, _, height := model.editorBodyBounds()
+
+	updated, _ := model.Update(tea.MouseClickMsg{X: x, Y: y + height + 1, Button: tea.MouseLeft})
+	model = updated.(shellModel)
+
+	require.Equal(t, len("SELECT ?s WHERE {}"), model.cursor)
+	require.False(t, model.mouseSelecting)
 }
 
 func TestShellModelIgnoresMetaA(t *testing.T) {
@@ -471,7 +657,7 @@ func TestSaveQueryHistoryKeepsOneHundredQueries(t *testing.T) {
 	require.Len(t, history, 100)
 }
 
-func TestShellModelShowsHistoryWhenUpCannotMoveEditorCursor(t *testing.T) {
+func TestShellModelKeepsHistoryVisibleWhenEditorCursorMoves(t *testing.T) {
 	model := newShellModel(context.Background(), &fakeRunner{})
 	model.query = "SELECT ?s WHERE {}"
 	model.cursor = 0
@@ -483,8 +669,7 @@ func TestShellModelShowsHistoryWhenUpCannotMoveEditorCursor(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	model = updated.(shellModel)
 
-	require.True(t, model.historyVisible)
-	require.Equal(t, focusHistory, model.focus)
+	require.Equal(t, focusEditor, model.focus)
 	require.Equal(t, -1, model.historyIndex)
 	require.Equal(t, "SELECT ?s WHERE {}", model.query)
 	require.Contains(t, model.View().Content, "History")
@@ -502,11 +687,11 @@ func TestShellModelDoesNotShowHistoryWhenUpMovesEditorCursor(t *testing.T) {
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	model = updated.(shellModel)
 
-	require.False(t, model.historyVisible)
+	require.Equal(t, focusEditor, model.focus)
 	require.Equal(t, 1, model.cursor)
 }
 
-func TestShellModelFocusesVisibleHistoryAndLoadsQueriesWithLeftRight(t *testing.T) {
+func TestShellModelFocusesHistoryWithShiftLeftAndLoadsQueriesWithLeftRight(t *testing.T) {
 	model := newShellModel(context.Background(), &fakeRunner{})
 	model.query = "SELECT ?s WHERE {}"
 	model.cursor = 0
@@ -515,39 +700,40 @@ func TestShellModelFocusesVisibleHistoryAndLoadsQueriesWithLeftRight(t *testing.
 		{Query: "SELECT ?old WHERE {}"},
 	}
 
-	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyLeftShift})
 	model = updated.(shellModel)
 	require.Equal(t, focusHistory, model.focus)
 	require.Equal(t, "SELECT ?s WHERE {}", model.query)
 
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	model = updated.(shellModel)
+	require.Equal(t, focusHistory, model.focus)
 	require.Equal(t, 0, model.historyIndex)
 	require.Equal(t, "SELECT ?new WHERE {}", model.query)
 	require.Equal(t, len([]rune(model.query)), model.cursor)
 
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	model = updated.(shellModel)
+	require.Equal(t, focusHistory, model.focus)
 	require.Equal(t, 1, model.historyIndex)
 	require.Equal(t, "SELECT ?old WHERE {}", model.query)
 
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	model = updated.(shellModel)
+	require.Equal(t, focusHistory, model.focus)
 	require.Equal(t, 0, model.historyIndex)
 	require.Equal(t, "SELECT ?new WHERE {}", model.query)
 }
 
-func TestShellModelHidesHistoryWhenTabReturnsToEditor(t *testing.T) {
+func TestShellModelShiftRightReturnsFromHistoryToEditor(t *testing.T) {
 	model := newShellModel(context.Background(), &fakeRunner{})
 	model.focus = focusHistory
-	model.historyVisible = true
 	model.history = []historyEntry{{Query: "SELECT ?old WHERE {}"}}
 
-	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyRightShift})
 	model = updated.(shellModel)
 
 	require.Equal(t, focusEditor, model.focus)
-	require.False(t, model.historyVisible)
 }
 
 func TestShellModelSavesSubmittedQueryToHistory(t *testing.T) {
@@ -818,6 +1004,11 @@ func TestShellModelTabsIntoResultsAndMovesFocusedRow(t *testing.T) {
 
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	model = updated.(shellModel)
+	require.Equal(t, focusEditor, model.focus)
+	require.Contains(t, model.query, "\t")
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyRightShift})
+	model = updated.(shellModel)
 	require.Equal(t, focusResults, model.focus)
 	require.Equal(t, 0, model.selectedRow)
 
@@ -828,6 +1019,10 @@ func TestShellModelTabsIntoResultsAndMovesFocusedRow(t *testing.T) {
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	model = updated.(shellModel)
 	require.Equal(t, 0, model.selectedRow)
+
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyLeftShift})
+	model = updated.(shellModel)
+	require.Equal(t, focusEditor, model.focus)
 }
 
 func TestShellModelScrollsResultsWithFocusedRow(t *testing.T) {
@@ -888,7 +1083,7 @@ func TestRenderResultsFitsAvailableHeight(t *testing.T) {
 	require.NotContains(t, rendered, "row 0")
 }
 
-func TestShellModelTabReturnsToEditor(t *testing.T) {
+func TestShellModelFocusShortcutReturnsToEditor(t *testing.T) {
 	model := newShellModel(context.Background(), &fakeRunner{})
 	model.result = Result{
 		Header: []string{"s"},
@@ -896,7 +1091,7 @@ func TestShellModelTabReturnsToEditor(t *testing.T) {
 	}
 	model.focus = focusResults
 
-	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyLeftShift})
 	model = updated.(shellModel)
 
 	require.Equal(t, focusEditor, model.focus)

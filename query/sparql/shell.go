@@ -161,10 +161,11 @@ type shellModel struct {
 	historyDir         string
 	history            []historyEntry
 	historyIndex       int
-	historyVisible     bool
 	selectedRow        int
 	resultOffset       int
 	resultsAllSelected bool
+	mouseSelecting     bool
+	mouseSelectAnchor  int
 }
 
 func newShellModel(ctx context.Context, runner Runner) shellModel {
@@ -202,21 +203,78 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			if offset, ok := m.editorOffsetAtMouse(msg.X, msg.Y); ok {
+				m.focus = focusEditor
+				m.cursor = offset
+				m.clearSelection()
+				m.mouseSelecting = true
+				m.mouseSelectAnchor = offset
+			}
+		}
+		return m, nil
+	case tea.MouseMotionMsg:
+		if m.mouseSelecting {
+			if offset, ok := m.editorOffsetAtMouse(msg.X, msg.Y); ok {
+				m.cursor = offset
+				m.selectionStart = m.mouseSelectAnchor
+				m.selectionEnd = offset
+			}
+		}
+		return m, nil
+	case tea.MouseReleaseMsg:
+		if m.mouseSelecting {
+			if offset, ok := m.editorOffsetAtMouse(msg.X, msg.Y); ok {
+				m.cursor = offset
+				m.selectionStart = m.mouseSelectAnchor
+				m.selectionEnd = offset
+			}
+			m.mouseSelecting = false
+		}
+		return m, nil
 	case tea.PasteMsg:
-		m.insertEditorText(msg.Content)
+		if m.focus == focusEditor {
+			m.insertEditorText(msg.Content)
+		}
 		return m, nil
 	case tea.ClipboardMsg:
-		m.insertEditorText(msg.Content)
+		if m.focus == focusEditor {
+			m.insertEditorText(msg.Content)
+		}
 		return m, nil
 	case tea.KeyPressMsg:
-		if msg.Keystroke() == "tab" {
-			m.toggleFocus()
+		if isFocusPreviousKey(msg) {
+			m.shiftFocus(-1)
+			return m, nil
+		}
+		if isFocusNextKey(msg) {
+			m.shiftFocus(1)
 			return m, nil
 		}
 		if msg.Keystroke() == "ctrl+l" {
 			return m, func() tea.Msg {
 				return tea.ClearScreen()
 			}
+		}
+		switch msg.Keystroke() {
+		case "ctrl+d":
+			return m, tea.Quit
+		case "ctrl+r":
+			if m.running {
+				return m, nil
+			}
+			m.submitted = strings.TrimSpace(m.query)
+			if m.submitted == "" {
+				m.err = "enter a SPARQL SELECT query"
+				return m, nil
+			}
+			m.err = ""
+			m.running = true
+			return m, tea.Batch(
+				runQueryCmd(m.ctx, m.runner, m.submitted),
+				saveHistoryCmd(m.historyDir, m.submitted),
+			)
 		}
 		if m.focus == focusHistory {
 			switch msg.Keystroke() {
@@ -227,6 +285,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loadHistoryOffset(-1)
 				return m, nil
 			}
+			return m, nil
 		}
 		if m.focus == focusResults {
 			switch msg.Keystroke() {
@@ -255,9 +314,26 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pageResults(1)
 				return m, nil
 			}
+			if isSelectAllKey(msg) {
+				if len(m.result.Rows) > 0 {
+					m.resultsAllSelected = true
+				}
+				return m, nil
+			}
+			if isCopyKey(msg) {
+				if text, ok := m.selectedResultsCSV(); ok {
+					return m, m.copyToClipboard(text, focusResults)
+				}
+				return m, nil
+			}
+			return m, nil
+		}
+		if msg.Keystroke() == "tab" {
+			m.insertEditorText("\t")
+			return m, nil
 		}
 		if isSelectAllKey(msg) {
-			if m.focus == focusResults && len(m.result.Rows) > 0 {
+			if len(m.result.Rows) > 0 && m.focus == focusResults {
 				m.resultsAllSelected = true
 				return m, nil
 			}
@@ -265,12 +341,6 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if isCopyKey(msg) {
-			if m.focus == focusResults {
-				if text, ok := m.selectedResultsCSV(); ok {
-					return m, m.copyToClipboard(text, focusResults)
-				}
-				return m, nil
-			}
 			if text, ok := m.selectedEditorText(); ok {
 				return m, m.copyToClipboard(text, focusEditor)
 			}
@@ -313,28 +383,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.Keystroke() {
-		case "ctrl+d":
-			return m, tea.Quit
-		case "ctrl+r":
-			if m.running {
-				return m, nil
-			}
-			m.submitted = strings.TrimSpace(m.query)
-			if m.submitted == "" {
-				m.err = "enter a SPARQL SELECT query"
-				return m, nil
-			}
-			m.err = ""
-			m.running = true
-			return m, tea.Batch(
-				runQueryCmd(m.ctx, m.runner, m.submitted),
-				saveHistoryCmd(m.historyDir, m.submitted),
-			)
 		case "esc":
-			m.query = ""
-			m.cursor = 0
-			m.clearSelection()
-			m.err = ""
 			return m, nil
 		case "backspace":
 			if !m.deleteSelection() {
@@ -353,14 +402,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearSelection()
 			return m, nil
 		case "up":
-			nextCursor := moveCursorVertically(m.query, m.cursor, -1)
-			if nextCursor == m.cursor && len(m.history) > 0 {
-				m.historyVisible = true
-				m.focus = focusHistory
-				m.historyIndex = -1
-				return m, nil
-			}
-			m.cursor = nextCursor
+			m.cursor = moveCursorVertically(m.query, m.cursor, -1)
 			m.clearSelection()
 			return m, nil
 		case "down":
@@ -425,13 +467,11 @@ func (m shellModel) View() tea.View {
 	)
 	view := tea.NewView(shellAppStyle.Width(width).Render(body))
 	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
 	return view
 }
 
 func (m shellModel) renderEditorColumn(width int) string {
-	if !m.historyVisible && m.focus != focusHistory {
-		return m.renderEditor(width)
-	}
 	return lipgloss.JoinVertical(lipgloss.Left, m.renderHistory(width), m.renderEditor(width))
 }
 
@@ -472,7 +512,7 @@ func (m shellModel) renderEditor(width int) string {
 func (m shellModel) renderHistory(width int) string {
 	titleStyle := historyTitleStyle
 	if m.focus == focusHistory {
-		titleStyle = focusedSectionTitleStyle
+		titleStyle = focusedHistoryTitleStyle
 	}
 	status := shellMutedStyle.Render("empty")
 	if len(m.history) > 0 {
@@ -526,36 +566,28 @@ func (m shellModel) renderResults(width int, availableHeight int) string {
 	return m.resultsPanel().Width(width).Render(content)
 }
 
-func (m *shellModel) toggleFocus() {
-	switch m.focus {
-	case focusEditor:
-		if m.historyVisible && len(m.history) > 0 {
-			m.focus = focusHistory
-			return
-		}
-		if len(m.result.Rows) > 0 {
-			m.focus = focusResults
-			m.selectedRow = min(max(0, m.selectedRow), len(m.result.Rows)-1)
-			m.ensureSelectedRowVisible()
-			return
-		}
-	case focusHistory:
-		if len(m.result.Rows) > 0 {
-			m.focus = focusResults
-			m.selectedRow = min(max(0, m.selectedRow), len(m.result.Rows)-1)
-			m.ensureSelectedRowVisible()
-			return
-		}
-		m.focus = focusEditor
-		m.historyVisible = false
-		return
-	case focusResults:
-		m.focus = focusEditor
-		m.historyVisible = false
-		return
+func (m *shellModel) shiftFocus(delta int) {
+	order := []shellFocus{focusHistory, focusEditor}
+	if len(m.result.Rows) > 0 {
+		order = append(order, focusResults)
 	}
-	m.focus = focusEditor
-	m.historyVisible = false
+
+	current := 1
+	for i, focus := range order {
+		if focus == m.focus {
+			current = i
+			break
+		}
+	}
+	next := (current + delta) % len(order)
+	if next < 0 {
+		next += len(order)
+	}
+	m.focus = order[next]
+	if m.focus == focusResults {
+		m.selectedRow = min(max(0, m.selectedRow), len(m.result.Rows)-1)
+		m.ensureSelectedRowVisible()
+	}
 }
 
 func (m *shellModel) loadHistoryOffset(delta int) {
@@ -596,6 +628,55 @@ func (m *shellModel) selectAll() {
 func (m *shellModel) clearSelection() {
 	m.selectionStart = m.cursor
 	m.selectionEnd = m.cursor
+}
+
+// editorOffsetAtMouse maps terminal mouse coordinates into a query rune offset.
+func (m shellModel) editorOffsetAtMouse(x int, y int) (int, bool) {
+	originX, originY, bodyWidth, bodyHeight := m.editorBodyBounds()
+	line, column := y-originY, x-originX
+	if line < 0 || line >= bodyHeight || column < 0 || column >= bodyWidth {
+		return 0, false
+	}
+	return queryOffsetAtLineColumn(m.query, line, column), true
+}
+
+// editorBodyBounds returns the terminal cell bounds for the visible editor text.
+func (m shellModel) editorBodyBounds() (int, int, int, int) {
+	width := max(60, m.width)
+	contentWidth := max(40, width-4)
+	editorWidth, _ := splitTopPanelWidths(contentWidth)
+
+	x := 2 + 1 + 2
+	y := 1 + 1 + lipgloss.Height(renderHelp()) + 1 + 1
+	y += lipgloss.Height(m.renderHistory(editorWidth))
+	bodyWidth := max(1, editorWidth-2-4)
+	bodyHeight := max(1, lipgloss.Height(renderEditorBody(m.query, m.cursor, m.selectionStart, m.selectionEnd)))
+	return x, y, bodyWidth, bodyHeight
+}
+
+// queryOffsetAtLineColumn returns the nearest query rune offset for a text cell.
+func queryOffsetAtLineColumn(query string, line int, column int) int {
+	if query == "" {
+		return 0
+	}
+	runes := []rune(query)
+	currentLine := 0
+	currentColumn := 0
+	for i, r := range runes {
+		if currentLine == line && currentColumn >= column {
+			return i
+		}
+		if r == '\n' {
+			if currentLine == line {
+				return i
+			}
+			currentLine++
+			currentColumn = 0
+			continue
+		}
+		currentColumn++
+	}
+	return len(runes)
 }
 
 func (m shellModel) selectedEditorText() (string, bool) {
@@ -1133,10 +1214,29 @@ func hasClipboardShortcut(msg tea.KeyPressMsg, key rune) bool {
 	return unicode.ToLower(k.Code) == key && k.Mod&tea.ModCtrl != 0
 }
 
+func isFocusPreviousKey(msg tea.KeyPressMsg) bool {
+	stroke := strings.ToLower(msg.Keystroke())
+	if stroke == "tab+left" || stroke == "shift+left" {
+		return true
+	}
+	key := msg.Key()
+	return key.Code == tea.KeyLeftShift || (key.Code == tea.KeyLeft && key.Mod&tea.ModShift != 0)
+}
+
+func isFocusNextKey(msg tea.KeyPressMsg) bool {
+	stroke := strings.ToLower(msg.Keystroke())
+	if stroke == "tab+right" || stroke == "shift+right" {
+		return true
+	}
+	key := msg.Key()
+	return key.Code == tea.KeyRightShift || (key.Code == tea.KeyRight && key.Mod&tea.ModShift != 0)
+}
+
 func renderHelp() string {
 	items := []string{
 		helpItem("Ctrl+R", "run"),
-		helpItem("Tab", "change focus"),
+		helpItem("Tab", "indent"),
+		helpItem("Shift+←/→", "change focus"),
 		helpItem("Ctrl+U", "clear row"),
 		helpItem("Ctrl+A", "select all"),
 		helpItem("Ctrl+C", "copy"),
@@ -1323,14 +1423,19 @@ var (
 	focusedSectionTitleStyle = lipgloss.NewStyle().
 					Bold(true).
 					Foreground(lipgloss.Color("#1F6F52"))
+	focusedHistoryTitleStyle = lipgloss.NewStyle().
+					Bold(true).
+					Foreground(lipgloss.Color("#E8EEF2")).
+					Background(lipgloss.Color("#0B5F46")).
+					Padding(0, 1)
 	editorPanelStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#5A8F7B")).
+				BorderForeground(lipgloss.Color("#6C7A99")).
 				Padding(1, 2).
 				MarginBottom(1)
 	focusedEditorPanelStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#1F6F52")).
+				Border(lipgloss.ThickBorder()).
+				BorderForeground(lipgloss.Color("#0B5F46")).
 				Padding(1, 2).
 				MarginBottom(1)
 	resultPanelStyle = lipgloss.NewStyle().
@@ -1338,8 +1443,8 @@ var (
 				BorderForeground(lipgloss.Color("#6C7A99")).
 				Padding(1, 2)
 	focusedResultPanelStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#1F6F52")).
+				Border(lipgloss.ThickBorder()).
+				BorderForeground(lipgloss.Color("#0B5F46")).
 				Padding(1, 2)
 	sqlPanelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
