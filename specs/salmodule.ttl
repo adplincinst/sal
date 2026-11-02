@@ -1,5 +1,5 @@
 @prefix salmodule:  <https://w3id.org/sal/cgs-earth/sal/ontology/salmodule#> .
-@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix dct: <http://purl.org/dc/elements/1.1/> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -8,15 +8,15 @@
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 
 
-<https://w3id.org/sal/cgs-earth/sal/ontology/salmodule#> a owl:Ontology ;
-                                                             dc:creator "Andrew Padilla" ;
-                                                             dc:date "2024-06-01"^^xsd:date ;
-                                                             dc:description "This is the SAL Module vocabulary for implementing the SAL Module specification in containerized application logic orchestrated within SAL projects"@en ;
-                                                             dc:title "The Semantic Accessibility Layer (SAL) Module Ontology"@en ;
-                                                             rdfs:label "SAL Module"@en ;
-                                                             owl:versionInfo "0.0.1" ;
-                                                             salmodule:protocolScheme "salmodule" .
-                                                             
+salmodule: a owl:Ontology ;
+            dct:creator "Andrew Padilla" ;
+            dct:date "2024-06-01"^^xsd:date ;
+            dct:description "This is the SAL Module vocabulary for implementing the SAL Module specification in containerized application logic orchestrated within SAL projects"@en ;
+            dct:title "The Semantic Accessibility Layer (SAL) Module Ontology"@en ;
+            rdfs:label "SAL Module"@en ;
+            owl:versionInfo "0.0.1" ;
+            salmodule:protocolScheme "salmodule" .
+            
 
 #################################################################
 #    Ontology properties
@@ -78,17 +78,16 @@ salmodule:taskShape a owl:AnnotationProperty ;
 #################################################################
 #    Classes
 #################################################################
-salmodule:Specification a owl:Class ;
-                  rdfs:comment "A class representing the SAL Module specification."@en ;
-                  rdfs:label "SAL Module Specification"@en ;
-                  skos:note "The SAL Module Specification class is the base class of all classes and their individuals that describe the specification."@en .
-
+salmodule:Specification a dct:Standard ;
+                  rdfs:comment "A resource representing the SAL Module specification."@en ;
+                  rdfs:label "SAL Module Specification"@en .
+                
 
 ###  https://w3id.org/sal/cgs-earth/sal/ontology/salmodule#Task
 salmodule:Task a owl:Class ;
                rdfs:comment "A class representing an operational task within a SAL Module containerized application."@en ;
                rdfs:label "Task"@en ;
-               rdfs:subClassOf salmodule:Specification ;
+               dct:conformsTo salmodule:Specification ;
                skos:note "SAL Module implementers create subclasses of salmodule:Task to define specific operational tasks within the containerized application."@en ;
                rdfs:seeAlso salmodule:TaskInstance, salmodule:RunCommand;
                salmodule:stderrShape [ a sh:NodeShape ;
@@ -109,7 +108,7 @@ salmodule:Task a owl:Class ;
 salmodule:Error a owl:Class ;
                 rdfs:comment "A class representing an error condition within a salmodule:Task at runtime."@en ;
                 rdfs:label "Error"@en ;
-                rdfs:subClassOf salmodule:Specification ;
+                dct:conformsTo salmodule:Specification ;
                 rdfs:seeAlso salmodule:Task ,
                              salmodule:RunCommand ;
                 skos:note "Instances of salmodule:Error represent error conditions that occur during the execution of a salmodule:Task within a SAL Module containerized application."@en .
@@ -117,14 +116,13 @@ salmodule:Error a owl:Class ;
 ###  https://w3id.org/sal/cgs-earth/sal/ontology/salmodule#Command
 salmodule:Command a owl:Class;
                 rdfs:label "Command"@en;
-                rdfs:comment "A class representing a command that can be executed within a SAL Module containerized application as part of the SAL Module command line specification."@en;
-                rdfs:subClassOf salmodule:Specification ;
+                rdfs:comment "A class representing a command that can be executed within a SAL Module containerized application as part of the SAL Module command line specification."@en;                
                 rdfs:seeAlso salmodule:Task .
 
 salmodule:EnvironmentVariable a owl:Class ;
                 rdfs:label "Environment Variable"@en ;
-                rdfs:comment "A class representing an environment variable that is part of the SAL Module specification."@en ;
-                rdfs:subClassOf salmodule:Specification .
+                rdfs:comment "A class representing an environment variable that is part of the SAL Module specification."@en .
+
               
 #################################################################
 # Properties
@@ -156,6 +154,7 @@ salmodule:isSubCommandOf a owl:ObjectProperty ;
 salmodule:SALModuleCommand a salmodule:Command ;
                 rdfs:label "salmodule"@en ;
                 rdfs:comment "The base command for all containerized applications that adhere to the SAL Module specification."@en ;
+                dct:conformsTo salmodule:Specification ;
                 salmodule:hasSubCommand salmodule:RunCommand, salmodule:OntologyCommand .
               
 ###  https://w3id.org/sal/cgs-earth/sal/ontology/salmodule#RunCommand
@@ -163,6 +162,7 @@ salmodule:RunCommand a salmodule:Command ;
                 rdfs:label "run"@en ;
                 salmodule:isSubCommandOf salmodule:SALModuleCommand ;
                 rdfs:comment "The command that invokes a salmodule:Task subclass instance within a SAL Module containerized application."@en ;
+                dct:conformsTo salmodule:Specification ;
                 rdfs:seeAlso  salmodule:TaskInstance .
 
 ###  https://w3id.org/sal/cgs-earth/sal/ontology/salmodule#OntologyCommand
@@ -170,12 +170,15 @@ salmodule:OntologyCommand a salmodule:Command ;
                 rdfs:label "ontology"@en ,
                             "vocab"@en ,
                             "vocabulary"@en ;
+              
                 salmodule:isSubCommandOf salmodule:SALModuleCommand ;
-                rdfs:comment "The command that prints the SAL Module ontology to stdout in JSON-LD format."@en .
-           
+                rdfs:comment "The command that prints the SAL Module ontology to stdout in JSON-LD format."@en ;                
+                dct:conformsTo salmodule:Specification .
+
 salmodule:TaskInstance a salmodule:EnvironmentVariable ;
                 rdfs:label "SALMODULE_TASK_INSTANCE"@en ;
                 rdfs:comment "The environment variable that identifies the instance of a salmodule:Task subclass defined in a SAL Module ontology to be invoked by salmodule:RunCommand."@en ;
+                dct:conformsTo salmodule:Specification ;
                 rdfs:seeAlso salmodule:RunCommand .
 
 
